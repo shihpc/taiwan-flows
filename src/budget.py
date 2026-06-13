@@ -168,9 +168,14 @@ def page_inst(agg: dict, side: str) -> dict:
         lst = sorted(lst, key=lambda a: abs(a[f"{side}_amt"]), reverse=True)
         return [_inst_row(a, side) for a in lst[:30]]
 
+    def topV(lst):  # 佔成交量（|net|÷成交量）
+        scored = [r for r in lst if r["vol"]]
+        scored.sort(key=lambda a: abs(a[f"{side}_net"]) / a["vol"], reverse=True)
+        return [_inst_row(a, side) for a in scored[:30]]
+
     return {
-        "buy_by_chg": topA(buy), "buy_by_amt": topB(buy),
-        "sell_by_chg": topA(sell), "sell_by_amt": topB(sell),
+        "buy_by_chg": topA(buy), "buy_by_amt": topB(buy), "buy_by_vol": topV(buy),
+        "sell_by_chg": topA(sell), "sell_by_amt": topB(sell), "sell_by_vol": topV(sell),
     }
 
 
@@ -241,15 +246,7 @@ def page_sync(agg: dict) -> dict:
     sb = sorted((sync_row(a) for a in sync_buy), key=lambda r: r["strength_k"], reverse=True)[:30]
     ss = sorted((sync_row(a) for a in sync_sell), key=lambda r: r["strength_k"], reverse=True)[:30]
 
-    def vol_share(side):
-        lst = [a for a in rows if a["vol"] and a[f"{side}_net"] != 0]
-        lst.sort(key=lambda a: abs(a[f"{side}_net"]) / a["vol"], reverse=True)
-        return [{"code": a["code"], "name": a["name"],
-                 "share_pct": round(abs(a[f"{side}_net"]) / a["vol"] * 100, 2),
-                 "net_lots": a[f"{side}_net"], "chg_pct": a["chg_pct"]} for a in lst[:10]]
-
-    return {"sync_buy": sb, "sync_sell": ss,
-            "trust_vol_share": vol_share("t"), "foreign_vol_share": vol_share("f")}
+    return {"sync_buy": sb, "sync_sell": ss}
 
 
 def page_oppose(agg: dict) -> dict:
