@@ -31,6 +31,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from finmind import fm_get  # noqa: E402
 from futures import fetch_futures  # noqa: E402
+from totals import update_total  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("pipeline")
@@ -267,6 +268,15 @@ def run_date(d: str) -> bool:
             logger.warning(f"{d} 期貨資料尚未更新，略過")
     except Exception as e:
         logger.warning(f"{d} 期貨抓取失敗（略過）：{e}")
+
+    # 市場總三大法人（三大法人卡用）— 非致命
+    try:
+        if update_total(d) is not None:
+            logger.info(f"已更新 data/totals.json（{d}）")
+        else:
+            logger.warning(f"{d} 市場總三大法人尚未更新，略過")
+    except Exception as e:
+        logger.warning(f"{d} 市場總三大法人抓取失敗（略過）：{e}")
     return True
 
 

@@ -165,7 +165,7 @@
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
-        sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"turnover"} } };
+        sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
 
 // ---------- formatters ----------
@@ -293,26 +293,28 @@ function renderEtf(page){
     <div class="line"><span>投信淨</span><span>${sign(g.t_amt_k,fmtYi(g.t_amt_k))}</span></div>
     <div class="line"><span>自營淨</span><span>${sign(g.d_amt_k,fmtYi(g.d_amt_k))}</span></div>
     <div class="line"><span>其他淨</span><span>${sign(g.other_amt_k,fmtYi(g.other_amt_k))}</span></div></div>`;
-  let html=`<div class="stats">${card("整體",page.stats.all)}${card("非債券型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
+  let html=`<div class="stats">${card("整體",page.stats.all)}${card("股票型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
   html+=`<div class="toggles"><div class="seg" data-seg="rank">
-    <button data-v="turnover" class="${s.rank==="turnover"?"active":""}">成交金額排行</button>
-    <button data-v="mktcap" class="${s.rank==="mktcap"?"active":""}">市值排行</button></div></div>`;
-  if(s.rank==="turnover"){
-    html+=table([COL_CODE,COL_NAME,
-      {h:"成交金額",f:r=>fmtYi(r.turnover_k)},
-      {h:"外資淨",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
-      {h:"投信淨",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},
-      {h:"自營淨",f:r=>sign(r.d_amt_k,fmtYi(r.d_amt_k))},
-      {h:"其他淨",f:r=>sign(r.other_amt_k,fmtYi(r.other_amt_k))},
-      {h:"漲跌",f:r=>chg(r.chg_pct)}], page.by_turnover);
-  }else{
-    html+=table([COL_CODE,COL_NAME,
-      {h:"市值",f:r=>fmtYi(r.mktcap_k)},
-      {h:"外資持股市值",f:r=>fmtYi(r.f_hold_value_k)},
-      {h:"投信持股市值",f:r=>fmtYi(r.t_hold_value_k)},
-      {h:"其他",f:r=>fmtYi(r.other_value_k)},
-      {h:"漲跌",f:r=>chg(r.chg_pct)}], page.by_mktcap);
-  }
+    <button data-v="mktcap" class="${s.rank==="mktcap"?"active":""}">市值排行</button>
+    <button data-v="turnover" class="${s.rank==="turnover"?"active":""}">成交金額排行</button></div></div>`;
+  const turnoverCols=[COL_CODE,COL_NAME,
+    {h:"成交金額",f:r=>fmtYi(r.turnover_k)},
+    {h:"外資淨",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
+    {h:"投信淨",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},
+    {h:"自營淨",f:r=>sign(r.d_amt_k,fmtYi(r.d_amt_k))},
+    {h:"其他淨",f:r=>sign(r.other_amt_k,fmtYi(r.other_amt_k))},
+    {h:"漲跌",f:r=>chg(r.chg_pct)}];
+  const mktcapCols=[COL_CODE,COL_NAME,
+    {h:"市值",f:r=>fmtYi(r.mktcap_k)},
+    {h:"外資持股市值",f:r=>fmtYi(r.f_hold_value_k)},
+    {h:"投信持股市值",f:r=>fmtYi(r.t_hold_value_k)},
+    {h:"其他",f:r=>fmtYi(r.other_value_k)},
+    {h:"漲跌",f:r=>chg(r.chg_pct)}];
+  const cols = s.rank==="turnover"?turnoverCols:mktcapCols;
+  const stockRows = s.rank==="turnover"?page.turnover_stock:page.mktcap_stock;
+  const bondRows  = s.rank==="turnover"?page.turnover_bond:page.mktcap_bond;
+  html+=`<div class="sub">股票型 ETF（非 B 結尾）</div>${table(cols,stockRows)}`;
+  html+=`<div class="sub">債券型 ETF（B 結尾）</div>${table(cols,bondRows)}`;
   return html;
 }
 
@@ -468,7 +470,7 @@ function jPageInst(agg,side){
 }
 function jPageEtf(agg){
   const etfs=Object.values(agg).filter(a=>a.is_etf);
-  const isBond=a=>a.name.includes("債"), mc=a=>a.issued_lots?Math.round(a.issued_lots*a.close):0;
+  const isBond=a=>a.code.endsWith("B"), mc=a=>a.issued_lots?Math.round(a.issued_lots*a.close):0;
   const stats=g=>({count:g.length,mktcap_k:g.reduce((s,a)=>s+mc(a),0),turnover_k:g.reduce((s,a)=>s+a.amt,0),
     f_amt_k:g.reduce((s,a)=>s+a.f_amt,0),t_amt_k:g.reduce((s,a)=>s+a.t_amt,0),d_amt_k:g.reduce((s,a)=>s+a.d_amt,0),
     other_amt_k:-g.reduce((s,a)=>s+a.f_amt+a.t_amt+a.d_amt,0)});
@@ -476,9 +478,10 @@ function jPageEtf(agg){
   const tRow=a=>({code:a.code,name:a.name,turnover_k:a.amt,f_amt_k:a.f_amt,t_amt_k:a.t_amt,d_amt_k:a.d_amt,other_amt_k:-(a.f_amt+a.t_amt+a.d_amt),chg_pct:a.chg_pct});
   const mRow=a=>{const m=mc(a),fv=a.f_shares!=null?Math.round(a.f_shares*a.close):0,tv=a.t_inv!=null?Math.round(a.t_inv*a.close):0;
     return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,chg_pct:a.chg_pct};};
+  const top=(lst,key)=>[...lst].sort((x,y)=>key(y)-key(x)).slice(0,20);
   return {stats:{all:stats(etfs),nonbond:stats(nonbond),bond:stats(bond)},
-    by_turnover:[...etfs].sort((x,y)=>y.amt-x.amt).slice(0,20).map(tRow),
-    by_mktcap:[...etfs].sort((x,y)=>mc(y)-mc(x)).slice(0,20).map(mRow)};
+    turnover_stock:top(nonbond,a=>a.amt).map(tRow), turnover_bond:top(bond,a=>a.amt).map(tRow),
+    mktcap_stock:top(nonbond,mc).map(mRow), mktcap_bond:top(bond,mc).map(mRow)};
 }
 function jPageSync(agg){
   const rows=Object.values(agg);

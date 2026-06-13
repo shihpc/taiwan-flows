@@ -177,8 +177,8 @@ def page_inst(agg: dict, side: str) -> dict:
 def page_etf(agg: dict) -> dict:
     etfs = [a for a in agg.values() if a["is_etf"]]
 
-    def is_bond(a):  # 債券型 ETF 判別：名稱含「債」
-        return "債" in a["name"]
+    def is_bond(a):  # 債券型 ETF 判別：代號 B 結尾（如 00679B、00772B）
+        return a["code"].endswith("B")
 
     def mktcap_k(a):
         return round(a["issued_lots"] * a["close"]) if a["issued_lots"] else 0
@@ -197,9 +197,6 @@ def page_etf(agg: dict) -> dict:
     bond = [a for a in etfs if is_bond(a)]
     nonbond = [a for a in etfs if not is_bond(a)]
 
-    by_turnover = sorted(etfs, key=lambda a: a["amt"], reverse=True)[:20]
-    by_mktcap = sorted(etfs, key=lambda a: mktcap_k(a), reverse=True)[:20]
-
     def turnover_row(a):
         return {"code": a["code"], "name": a["name"], "turnover_k": a["amt"],
                 "f_amt_k": a["f_amt"], "t_amt_k": a["t_amt"], "d_amt_k": a["d_amt"],
@@ -213,10 +210,16 @@ def page_etf(agg: dict) -> dict:
                 "f_hold_value_k": f_val, "t_hold_value_k": t_val,
                 "other_value_k": mc - f_val - t_val, "chg_pct": a["chg_pct"]}
 
+    def top(lst, key):
+        return sorted(lst, key=key, reverse=True)[:20]
+
     return {
         "stats": {"all": stats(etfs), "nonbond": stats(nonbond), "bond": stats(bond)},
-        "by_turnover": [turnover_row(a) for a in by_turnover],
-        "by_mktcap": [mktcap_row(a) for a in by_mktcap],
+        # 股票型(非B) / 債券型(B結尾) 分表
+        "turnover_stock": [turnover_row(a) for a in top(nonbond, lambda a: a["amt"])],
+        "turnover_bond": [turnover_row(a) for a in top(bond, lambda a: a["amt"])],
+        "mktcap_stock": [mktcap_row(a) for a in top(nonbond, mktcap_k)],
+        "mktcap_bond": [mktcap_row(a) for a in top(bond, mktcap_k)],
     }
 
 
