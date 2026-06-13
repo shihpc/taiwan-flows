@@ -12,3 +12,6 @@ Thumbs.db
 
 # local run logs
 logs_backfill.txt
+
+# local preview config
+.claude/
