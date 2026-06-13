@@ -1,0 +1,11 @@
+# secrets
+.env
+
+# python venv
+venv/
+__pycache__/
+*.pyc
+
+# os
+Thumbs.db
+.DS_Store
