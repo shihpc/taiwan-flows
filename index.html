@@ -511,7 +511,7 @@ async function updateFutbar(){
     <div class="cardhead"><span class="ttl">台指期 外資未平倉</span>
       <span class="k">${d2}</span><span class="k">vs</span>
       <select id="futSel">${opts}</select>
-      <span class="k">${ref?`(${ref})`:"無此基準"}</span></div>
+      <span class="k">${ref?ref:"無此基準"}</span></div>
     <div class="cardvals">
       <div><span class="k">未平倉口數</span> <span class="v">${sign(cur.lots,fmtLot(cur.lots)+" 口")}</span></div>
       <div><span class="k">金額淨額</span> <span class="v">${sign(cur.amt,fmtYi(cur.amt))}</span></div>
