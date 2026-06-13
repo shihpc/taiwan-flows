@@ -12,6 +12,7 @@ Thumbs.db
 
 # local run logs
 logs_backfill.txt
+logs_market*.txt
 
 # local preview config
 .claude/
