@@ -255,11 +255,12 @@ function renderOppose(page){
     {h:"外資張",f:r=>sign(r.f_net,fmtLot(r.f_net))},
     {h:"投信金額",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},
     {h:"投信張",f:r=>sign(r.t_net,fmtLot(r.t_net))},
+    {h:"對作強度",f:r=>`<span style="color:var(--accent)">${fmtYi(r.strength_k)}</span>`},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   let html=`<div class="toggles"><div class="seg" data-seg="side">
     <button data-v="fbuy" class="${s.side==="fbuy"?"active":""}">外資買·投信賣</button>
     <button data-v="fsell" class="${s.side==="fsell"?"active":""}">外資賣·投信買</button></div></div>`;
-  html += `<div class="muted" style="font-size:11px;margin-bottom:6px">外資與投信方向相反（聰明錢分歧），依外資金額排序 Top30</div>`;
+  html += `<div class="muted" style="font-size:11px;margin-bottom:6px">外資與投信方向相反（聰明錢分歧）。對作強度 = 雙方金額較小者，依此排序 Top30</div>`;
   html += table(cols, rows);
   return html;
 }

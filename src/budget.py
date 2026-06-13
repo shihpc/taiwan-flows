@@ -253,15 +253,17 @@ def page_oppose(agg: dict) -> dict:
     f_sell_t_buy = [a for a in rows if a["f_net"] < 0 and a["t_net"] > 0]  # 外資賣·投信買
 
     def row(a):
+        # 對作強度 = 雙方金額較小者（兩邊都重押才算真分歧）
+        strength = min(abs(a["t_amt"]), abs(a["f_amt"]))
         return {"code": a["code"], "name": a["name"],
                 "t_amt_k": a["t_amt"], "t_net": a["t_net"],
                 "f_amt_k": a["f_amt"], "f_net": a["f_net"],
-                "chg_pct": a["chg_pct"]}
+                "strength_k": strength, "chg_pct": a["chg_pct"]}
 
-    # 以外資金額絕對值排序（外資為主導力量，對作越大越前）
-    fb = sorted(f_buy_t_sell, key=lambda a: a["f_amt"], reverse=True)[:30]
-    fs = sorted(f_sell_t_buy, key=lambda a: a["f_amt"])[:30]
-    return {"f_buy_t_sell": [row(a) for a in fb], "f_sell_t_buy": [row(a) for a in fs]}
+    # 依對作強度排序（雙方都重押的真分歧優先）
+    fb = sorted((row(a) for a in f_buy_t_sell), key=lambda r: r["strength_k"], reverse=True)[:30]
+    fs = sorted((row(a) for a in f_sell_t_buy), key=lambda r: r["strength_k"], reverse=True)[:30]
+    return {"f_buy_t_sell": fb, "f_sell_t_buy": fs}
 
 
 # ════════════════════════════════════════════════════════════════
