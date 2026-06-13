@@ -19,6 +19,7 @@
     border-bottom:1px solid var(--line);padding:8px 10px 0}
   .titlerow{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   .brand{color:var(--accent);font-weight:700;letter-spacing:.5px;font-size:26px}
+  .updated{font-size:10px;color:var(--dim);white-space:nowrap}
   .brand b{color:var(--fg)}
   .date{color:var(--dim)}
   .status{margin-left:auto;font-size:11px;padding:2px 8px;border-radius:10px;
@@ -153,6 +154,7 @@
 <header>
   <div class="titlerow">
     <span class="brand">外資投信ETF進出</span>
+    <span class="updated" id="updated"></span>
     <span class="status" id="status">載入中</span>
   </div>
   <div class="modes" id="modes">
@@ -228,6 +230,8 @@ const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_bla
 async function boot(){
   try{
     state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
+    const ts=(state.latest.generated_at||"").slice(0,16).replace("T"," ");
+    if(ts) document.getElementById("updated").textContent="更新 "+ts;
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
   await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
