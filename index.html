@@ -44,7 +44,15 @@
   /* futures card */
   .fcard{display:flex;gap:14px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);
     border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:10px}
-  #futbar{margin:8px 0 6px}
+  #futbar,#totbar{margin:6px 0;padding:8px 12px}
+  .cardwrap{display:flex;flex-direction:column;gap:6px;width:100%}
+  .cardhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cardhead .ttl{font-weight:700;color:var(--fg);font-size:13px}
+  .cardvals{display:flex;gap:18px;flex-wrap:wrap}
+  .cardvals .v{font-size:15px;font-weight:700}
+  .fcard select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;
+    padding:3px 6px;font-family:inherit;font-size:12px;color-scheme:dark;max-width:180px}
+  .seg.tsel button{padding:3px 12px}
   .fcard .k{color:var(--dim);font-size:11px}
   .fcard .v{font-size:16px;font-weight:700}
   /* stat cards */
@@ -116,6 +124,8 @@
     <span class="brand">台股資金流<b> taiwan-flows</b></span>
     <span class="status" id="status">載入中</span>
   </div>
+  <div class="daterow" id="daterow"></div>
+  <div id="totbar" class="fcard" style="display:none"></div>
   <div id="futbar" class="fcard" style="display:none"></div>
   <div class="tabs" id="tabs">
     <div class="tab" data-tab="foreign">外資進出</div>
@@ -132,10 +142,10 @@
     <div class="mode" data-mode="r65">65日</div>
     <div class="mode" data-mode="thisweek">本週</div>
     <div class="mode" data-mode="lastweek">上週</div>
+    <div class="mode" data-mode="lastmonth">上月</div>
     <div class="mode" data-mode="custom">自訂區間</div>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
   </div>
-  <div class="daterow" id="daterow"></div>
 </header>
 
 <div class="overlay" id="overlay">
@@ -164,9 +174,12 @@
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
+  totals:null, totSel:{period:"day",key:null}, futCmp:"prev1",
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
         sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
+const fmtDate = x=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+const parseDate = s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);};
 
 // ---------- formatters ----------
 // 億值格式：<10億顯示2位小數（小額保精度），其餘整數加千分位
@@ -185,6 +198,8 @@ async function boot(){
     state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
+  await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
+  try{ state.totals = await (await fetch("data/totals.json",{cache:"no-cache"})).json(); }catch(e){ state.totals=null; }
   try{
     const s = await (await fetch("data/status.json",{cache:"no-cache"})).json();
     const el = document.getElementById("status");
@@ -192,6 +207,7 @@ async function boot(){
     else if(s.status==="no_data"){ el.textContent="尚未開盤/非交易日"; el.className="status nodata"; }
     else { el.textContent="資料異常"; el.className="status nodata"; }
   }catch(e){ document.getElementById("status").style.display="none"; }
+  renderTotCard();
   render();
 }
 async function ensureRanges(){
@@ -200,7 +216,7 @@ async function ensureRanges(){
 }
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
-  if(state.mode==="custom"||state.mode==="thisweek"||state.mode==="lastweek") return state.customPages;
+  if(["custom","thisweek","lastweek","lastmonth"].includes(state.mode)) return state.customPages;
   return state.ranges.windows[state.mode].pages;
 }
 
@@ -320,7 +336,7 @@ function renderEtf(page){
 
 function updateDateLabel(){
   const el=document.getElementById("daterow");
-  const wk={thisweek:"本週",lastweek:"上週",custom:"自訂區間"};
+  const wk={thisweek:"本週",lastweek:"上週",lastmonth:"上月",custom:"自訂區間"};
   let txt="", repick=false;
   if(state.mode==="1d"){ txt="資料日 "+state.latest.date; }
   else if(state.mode in wk){
@@ -337,22 +353,102 @@ function updateDateLabel(){
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
 }
-function updateFutbar(pages){
-  const el=document.getElementById("futbar");
-  const c = pages && pages.foreign && pages.foreign.futures_card;
-  if(!c){ el.style.display="none"; el.innerHTML=""; return; }
+// ----- 三大法人買賣超卡（item 4）-----
+function totGroups(period){
+  const dates=state.totals.dates;
+  if(period==="day") return dates.slice().reverse().map(d=>({key:d,label:d,dates:[d]}));
+  const map=new Map();
+  for(const d of dates){
+    let key;
+    if(period==="week"){ const dt=parseDate(d), dow=(dt.getDay()+6)%7, mon=new Date(dt); mon.setDate(dt.getDate()-dow); key=fmtDate(mon); }
+    else key=d.slice(0,7);
+    if(!map.has(key)) map.set(key,[]); map.get(key).push(d);
+  }
+  const groups=[...map.entries()].map(([key,ds])=>{
+    const label = period==="week" ? `${ds[0].slice(5).replace("-","/")} ~ ${ds[ds.length-1].slice(5).replace("-","/")}` : key;
+    return {key,label,dates:ds};
+  });
+  return groups.reverse();  // 最新在前
+}
+function computeTot(dates){
+  let f=0,t=0,d=0;
+  for(const dd of dates){ const r=state.totals.rows[dd]; if(r){ f+=r.f_net_k; t+=r.t_net_k; d+=r.d_net_k; } }
+  return {f,t,d};
+}
+function renderTotCard(){
+  const el=document.getElementById("totbar");
+  if(!state.totals || !state.totals.dates.length){ el.style.display="none"; return; }
   el.style.display="flex";
-  el.innerHTML=`<div><div class="k">台指期 外資未平倉</div><div class="v">${sign(c.oi_net_lots,fmtLot(c.oi_net_lots)+" 口")}</div></div>`
-    +`<div><div class="k">金額淨額</div><div class="v">${sign(c.oi_net_amount_k,fmtYi(c.oi_net_amount_k))}</div></div>`
-    +(c.vs_prev_month_lots!=null?`<div><div class="k">vs 前月底(${c.prev_month_end})</div><div class="v">${sign(c.vs_prev_month_lots,fmtLot(c.vs_prev_month_lots)+" 口")}</div></div>`:``);
+  const period=state.totSel.period, groups=totGroups(period);
+  if(!state.totSel.key || !groups.find(g=>g.key===state.totSel.key)) state.totSel.key=groups[0].key;
+  const g=groups.find(x=>x.key===state.totSel.key), s=computeTot(g.dates);
+  const btn=(p,l)=>`<button data-p="${p}" class="${period===p?"active":""}">${l}</button>`;
+  const opts=groups.map(x=>`<option value="${x.key}" ${x.key===state.totSel.key?"selected":""}>${x.label}</option>`).join("");
+  el.innerHTML=`<div class="cardwrap">
+    <div class="cardhead"><span class="ttl">三大法人買賣超</span>
+      <div class="seg tsel">${btn("day","日")}${btn("week","週")}${btn("month","月")}</div>
+      <select id="totSel">${opts}</select></div>
+    <div class="cardvals">
+      <div><span class="k">外資</span> <span class="v">${sign(s.f,fmtYi(s.f))}</span></div>
+      <div><span class="k">投信</span> <span class="v">${sign(s.t,fmtYi(s.t))}</span></div>
+      <div><span class="k">自營</span> <span class="v">${sign(s.d,fmtYi(s.d))}</span></div></div>
+  </div>`;
+  el.querySelectorAll(".tsel button").forEach(b=>b.onclick=()=>{ state.totSel.period=b.dataset.p; state.totSel.key=null; renderTotCard(); });
+  document.getElementById("totSel").onchange=e=>{ state.totSel.key=e.target.value; renderTotCard(); };
+}
+// ----- 台指期外資未平倉卡 + 比較日選項（item 2）-----
+const FUTCMP=[["prev1","單日(前一日)"],["d5","5日前"],["d10","10日前"],["d20","20日前"],["d65","65日前"],
+  ["thisMon","本週一"],["lastFri","上週五"],["lastMonthEnd","上月底"],["customStart","自訂首日"]];
+function modeD2(){
+  if(state.mode==="1d") return state.latest.date;
+  if(["custom","thisweek","lastweek","lastmonth"].includes(state.mode)) return state.customMeta?state.customMeta.d2:null;
+  if(state.ranges && state.ranges.windows[state.mode]) return state.ranges.windows[state.mode].end;
+  return state.latest?state.latest.date:null;
+}
+function refDateFor(cmp,d2){
+  const cal=state.meta.calendar, i=cal.indexOf(d2);
+  if(i<0) return null;
+  const back=n=>cal[Math.max(0,i-n)];
+  if(cmp==="prev1")return back(1); if(cmp==="d5")return back(5); if(cmp==="d10")return back(10);
+  if(cmp==="d20")return back(20); if(cmp==="d65")return back(65);
+  const dt=parseDate(d2), dow=(dt.getDay()+6)%7, mon=new Date(dt); mon.setDate(dt.getDate()-dow);
+  if(cmp==="thisMon"){ const ms=fmtDate(mon), c=cal.filter(x=>x>=ms&&x<=d2); return c.length?c[0]:null; }
+  if(cmp==="lastFri"){ const ps=new Date(mon); ps.setDate(mon.getDate()-1); const s=fmtDate(ps), c=cal.filter(x=>x<=s); return c.length?c[c.length-1]:null; }
+  if(cmp==="lastMonthEnd"){ const m=d2.slice(0,7), c=cal.filter(x=>x.slice(0,7)<m); return c.length?c[c.length-1]:null; }
+  if(cmp==="customStart") return state.customMeta?state.customMeta.d1:null;
+  return null;
+}
+async function updateFutbar(){
+  const el=document.getElementById("futbar");
+  const d2=modeD2();
+  if(!d2 || !state.meta){ el.style.display="none"; return; }
+  const cur=await fetchTxOI(d2);
+  if(!cur){ el.style.display="none"; el.innerHTML=""; return; }
+  const cmp=state.futCmp, ref=refDateFor(cmp,d2);
+  const refOI = ref ? await fetchTxOI(ref) : null;
+  const diff = refOI ? cur.lots-refOI.lots : null;
+  if(modeD2()!==d2 || state.futCmp!==cmp) return;  // 期間又被切換，放棄這次渲染
+  const opts=FUTCMP.map(([k,l])=>`<option value="${k}" ${k===cmp?"selected":""}>${l}</option>`).join("");
+  el.style.display="flex";
+  el.innerHTML=`<div class="cardwrap">
+    <div class="cardhead"><span class="ttl">台指期 外資未平倉</span>
+      <span class="k">資料日 ${d2}</span><span class="k">vs</span>
+      <select id="futSel">${opts}</select>
+      <span class="k">${ref?`(${ref})`:"無此基準"}</span></div>
+    <div class="cardvals">
+      <div><span class="k">未平倉口數</span> <span class="v">${sign(cur.lots,fmtLot(cur.lots)+" 口")}</span></div>
+      <div><span class="k">金額淨額</span> <span class="v">${sign(cur.amt,fmtYi(cur.amt))}</span></div>
+      ${diff!=null?`<div><span class="k">vs ${ref} 增減</span> <span class="v">${sign(diff,fmtLot(diff)+" 口")}</span></div>`:``}</div>
+  </div>`;
+  document.getElementById("futSel").onchange=e=>{ state.futCmp=e.target.value; updateFutbar(); };
 }
 function render(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
   updateDateLabel();
-  if(state.mode==="custom" && !state.customPages){ updateFutbar(null); renderPicker(); return; }
+  if(state.mode==="custom" && !state.customPages){ updateFutbar(); renderPicker(); return; }
   const pages = currentPages();
-  updateFutbar(pages);
+  updateFutbar();
   const main = document.getElementById("main");
   let html="";
   if(state.tab==="foreign") html+=renderInst(pages.foreign,"foreign");
@@ -364,7 +460,7 @@ function render(){
   bindSegs();
 }
 function bindSegs(){
-  document.querySelectorAll(".seg").forEach(seg=>{
+  document.querySelectorAll(".seg[data-seg]").forEach(seg=>{
     seg.querySelectorAll("button").forEach(b=>b.onclick=()=>{
       const which=seg.dataset.seg, v=b.dataset.v;
       if(state.tab==="etf") state.sub.etf.rank=v;
@@ -389,8 +485,8 @@ document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
     render();
     return;
   }
-  if(mode==="thisweek"||mode==="lastweek"){
-    document.getElementById("main").innerHTML='<div class="loading">載入週資料…</div>';
+  if(mode==="thisweek"||mode==="lastweek"||mode==="lastmonth"){
+    document.getElementById("main").innerHTML='<div class="loading">載入區間資料…</div>';
     await loadMeta();
     const {start,end}=weekRange(mode);
     await runCustomRange(start,end,mode);
@@ -520,17 +616,22 @@ function setProg(i,n){
 }
 function pickerMsg(txt){ const m=document.getElementById("cMsg"); if(m) m.textContent=txt;
   else document.getElementById("main").innerHTML=`<div class="loading">${txt}</div>`; }
-// 以最近資料日為錨，回傳本週/上週的日曆起訖（YYYY-MM-DD）
+// 以最近資料日為錨，回傳本週/上週/上月的日曆起訖（YYYY-MM-DD）
 function weekRange(which){
   const cal=state.meta.calendar, d2s=cal[cal.length-1];
-  const [y,m,d]=d2s.split("-").map(Number), dt=new Date(y,m-1,d);
+  const dt=parseDate(d2s);
+  if(which==="lastmonth"){                                           // 上一個日曆月 1 日 ~ 月底
+    const firstThis=new Date(dt.getFullYear(),dt.getMonth(),1);
+    const lastPrev=new Date(firstThis); lastPrev.setDate(0);
+    const firstPrev=new Date(lastPrev.getFullYear(),lastPrev.getMonth(),1);
+    return {start:fmtDate(firstPrev), end:fmtDate(lastPrev)};
+  }
   const dow=(dt.getDay()+6)%7;  // 0=週一 … 6=週日
   const mon=new Date(dt); mon.setDate(dt.getDate()-dow);
-  const fmt=x=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
-  if(which==="thisweek") return {start:fmt(mon), end:d2s};           // 當週一 → 最近資料日
+  if(which==="thisweek") return {start:fmtDate(mon), end:d2s};       // 當週一 → 最近資料日
   const lm=new Date(mon); lm.setDate(mon.getDate()-7);               // 前週一
   const lf=new Date(lm); lf.setDate(lm.getDate()+4);                 // 前週五
-  return {start:fmt(lm), end:fmt(lf)};
+  return {start:fmtDate(lm), end:fmtDate(lf)};
 }
 async function runCustomRange(startStr,endStr,kind="custom"){
   await loadMeta();
