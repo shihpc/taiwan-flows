@@ -190,7 +190,8 @@ const parseDate = s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m
 
 // ---------- formatters ----------
 // 億值格式：<10億顯示2位小數（小額保精度），其餘整數加千分位
-const yiStr = v => (Math.abs(v)<10 ? v.toFixed(2) : Math.round(v).toLocaleString("en-US"))+"億";
+// 億元統一小數一位（含千分位）
+const yiStr = v => v.toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1})+"億";
 const fmtYi = k => (k==null?"—":yiStr(k/1e5));    // 千元 → 億
 const fmtYiM = m => (m==null?"—":yiStr(m/100));   // 百萬 → 億
 const fmtLot = n => (n==null?"—":Math.round(n).toLocaleString("en-US"));
