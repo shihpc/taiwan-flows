@@ -334,9 +334,10 @@ def main() -> None:
     # latest_ranges.json：近 5/10/20/65
     ranges = {"date": d2, "generated_at": datetime.now(TPE).isoformat(), "windows": {}}
     for key, n in WINDOWS.items():
-        ranges["windows"][key] = {"trading_days": min(n, len(dates)),
+        win = dates[-n:] if n <= len(dates) else dates
+        ranges["windows"][key] = {"trading_days": len(win), "start": win[0], "end": win[-1],
                                   "pages": build_view(dates, docs, meta, n)}
-        logger.info(f"  {key}: {min(n,len(dates))} 交易日")
+        logger.info(f"  {key}: {len(win)} 交易日（{win[0]} ~ {win[-1]}）")
     RANGES_PATH.write_text(json.dumps(ranges, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     logger.info(f"已寫入 latest_ranges.json（{RANGES_PATH.stat().st_size/1024:.0f} KB）")
 

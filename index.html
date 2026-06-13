@@ -317,9 +317,20 @@ function renderEtf(page){
   return html;
 }
 
+function updateDateLabel(){
+  const el=document.getElementById("date");
+  if(state.mode==="1d"){ el.textContent="資料日 "+state.latest.date; }
+  else if(state.mode==="custom"){
+    el.textContent = state.customMeta ? `${state.customMeta.d1} ~ ${state.customMeta.d2}·${state.customMeta.n}日` : "自訂區間";
+  } else if(state.ranges && state.ranges.windows[state.mode]){
+    const w=state.ranges.windows[state.mode];
+    el.textContent = `${w.start} ~ ${w.end}·${w.trading_days}日`;
+  }
+}
 function render(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
+  updateDateLabel();
   if(state.mode==="custom" && !state.customPages){ renderPicker(); return; }
   const pages = currentPages();
   const main = document.getElementById("main");
