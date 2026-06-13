@@ -226,14 +226,17 @@ def page_sync(agg: dict) -> dict:
     sync_sell = [a for a in rows if a["t_net"] < 0 and a["f_net"] < 0]
 
     def sync_row(a):
+        # 同步強度 = 雙方金額較小者（兩邊都大買/大賣才算真共識，對作頁的鏡像）
+        strength = min(abs(a["t_amt"]), abs(a["f_amt"]))
         return {"code": a["code"], "name": a["name"],
                 "t_amt_k": a["t_amt"], "t_net": a["t_net"],
                 "f_amt_k": a["f_amt"], "f_net": a["f_net"],
                 "sum_amt_k": a["t_amt"] + a["f_amt"], "sum_net": round(a["t_net"] + a["f_net"], 1),
-                "chg_pct": a["chg_pct"]}
+                "strength_k": strength, "chg_pct": a["chg_pct"]}
 
-    sb = sorted(sync_buy, key=lambda a: a["t_amt"] + a["f_amt"], reverse=True)[:30]
-    ss = sorted(sync_sell, key=lambda a: a["t_amt"] + a["f_amt"])[:30]
+    # 依同步強度排序（雙方都重押的真共識優先；與對作頁一致）
+    sb = sorted((sync_row(a) for a in sync_buy), key=lambda r: r["strength_k"], reverse=True)[:30]
+    ss = sorted((sync_row(a) for a in sync_sell), key=lambda r: r["strength_k"], reverse=True)[:30]
 
     def vol_share(side):
         lst = [a for a in rows if a["vol"] and a[f"{side}_net"] != 0]
@@ -242,7 +245,7 @@ def page_sync(agg: dict) -> dict:
                  "share_pct": round(abs(a[f"{side}_net"]) / a["vol"] * 100, 2),
                  "net_lots": a[f"{side}_net"], "chg_pct": a["chg_pct"]} for a in lst[:10]]
 
-    return {"sync_buy": [sync_row(a) for a in sb], "sync_sell": [sync_row(a) for a in ss],
+    return {"sync_buy": sb, "sync_sell": ss,
             "trust_vol_share": vol_share("t"), "foreign_vol_share": vol_share("f")}
 
 

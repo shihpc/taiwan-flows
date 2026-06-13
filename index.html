@@ -233,10 +233,12 @@ function renderSync(page){
     {h:"外資金額",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
     {h:"外資張",f:r=>sign(r.f_net,fmtLot(r.f_net))},
     {h:"加總金額",f:r=>sign(r.sum_amt_k,fmtYi(r.sum_amt_k))},
+    {h:"同步強度",f:r=>`<span style="color:var(--accent)">${fmtYi(r.strength_k)}</span>`},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   let html=`<div class="toggles"><div class="seg" data-seg="side">
     <button data-v="buy" class="${s.side==="buy"?"active":""}">同步買超</button>
     <button data-v="sell" class="${s.side==="sell"?"active":""}">同步賣超</button></div></div>`;
+  html += `<div class="muted" style="font-size:11px;margin-bottom:6px">外資與投信同方向（聰明錢共識）。同步強度 = 雙方金額較小者，依此排序 Top30</div>`;
   html += table(cols, rows);
   const shareCols=[COL_CODE,COL_NAME,
     {h:"佔成交量%",f:r=>r.share_pct.toFixed(2)},
