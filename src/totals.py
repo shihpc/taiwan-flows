@@ -30,14 +30,19 @@ DEALER = {"Dealer_self", "Dealer_Hedging"}
 
 
 def fetch_total(d: str) -> dict | None:
-    """單日市場三大法人淨買賣超（千元）。"""
+    """單日市場三大法人買/賣/淨（千元）。"""
     df = fm_get("TaiwanStockTotalInstitutionalInvestors", start_date=d, end_date=d)
     if df is None or df.empty:
         return None
     df = df.copy()
-    df["net"] = (df["buy"].astype(float) - df["sell"].astype(float)) / 1000.0  # 千元
-    pick = lambda names: round(float(df[df["name"].isin(names)]["net"].sum()))  # noqa: E731
-    return {"f_net_k": pick(FOREIGN), "t_net_k": pick(TRUST), "d_net_k": pick(DEALER)}
+    df["buy_k"] = df["buy"].astype(float) / 1000.0
+    df["sell_k"] = df["sell"].astype(float) / 1000.0
+    pick = lambda names, col: round(float(df[df["name"].isin(names)][col].sum()))  # noqa: E731
+    out = {}
+    for tag, names in (("f", FOREIGN), ("t", TRUST), ("d", DEALER)):
+        b, s = pick(names, "buy_k"), pick(names, "sell_k")
+        out[f"{tag}_buy_k"], out[f"{tag}_sell_k"], out[f"{tag}_net_k"] = b, s, b - s
+    return out
 
 
 def load_totals() -> dict:
