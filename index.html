@@ -74,9 +74,10 @@
   th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}
   th{position:sticky;top:0;background:var(--panel2);color:var(--dim);font-weight:500;font-size:11px;z-index:1}
   td.code,th.code,td.name,th.name{text-align:left}
-  /* freeze first two cols */
-  th.code,td.code{position:sticky;left:0;background:var(--panel);z-index:2}
-  th.name,td.name{position:sticky;left:54px;background:var(--panel);z-index:2}
+  /* freeze first two cols — code 固定寬度，name 的 left 與之對齊避免空隙/重疊 */
+  th.code,td.code{position:sticky;left:0;background:var(--panel);z-index:2;
+    width:62px;min-width:62px;max-width:62px;box-sizing:border-box}
+  th.name,td.name{position:sticky;left:62px;background:var(--panel);z-index:2}
   th.code{z-index:3}th.name{z-index:3}
   tbody tr:nth-child(odd) td{background:#0c121a}
   tbody tr:nth-child(odd) td.code,tbody tr:nth-child(odd) td.name{background:#0c121a}
