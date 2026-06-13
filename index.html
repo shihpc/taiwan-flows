@@ -67,6 +67,23 @@
   tbody tr:hover td{background:#142030}
   .up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--dim)}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
+  /* info overlay */
+  .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
+    color:var(--accent);border-radius:14px;cursor:pointer;font-size:12px;font-family:inherit}
+  .overlay{position:fixed;inset:0;background:#000c;z-index:50;display:none;
+    align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel2);border:1px solid var(--accent2);border-radius:10px;
+    max-width:580px;width:100%;padding:16px 18px;box-shadow:0 0 40px #0008}
+  .modal h3{margin:0;color:var(--accent);display:flex;justify-content:space-between;align-items:center}
+  .modal .x{cursor:pointer;color:var(--dim);font-size:18px;line-height:1}
+  .modal h4{color:var(--accent);margin:16px 0 4px;font-size:13px}
+  .modal p,.modal li{font-size:12px;line-height:1.65;color:var(--fg)}
+  .modal ul{margin:4px 0;padding-left:18px}
+  .modal table{margin-top:6px;font-size:11.5px}
+  .modal th,.modal td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:normal}
+  .modal th{background:transparent;position:static;color:var(--dim)}
+  .modal .note{color:var(--dim);font-size:11px;margin-top:10px;border-left:2px solid var(--accent2);padding-left:8px}
   .loading{color:var(--dim);padding:30px;text-align:center}
   .twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   @media(max-width:560px){.twocol{grid-template-columns:1fr}.stats{grid-template-columns:1fr}}
@@ -92,8 +109,30 @@
     <div class="mode" data-mode="r10">10日</div>
     <div class="mode" data-mode="r20">20日</div>
     <div class="mode" data-mode="r65">65日</div>
+    <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
   </div>
 </header>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3>模式與計算口徑 <span class="x" id="infoClose">✕</span></h3>
+    <p><b>單日</b>＝最近交易日當天值。<b>5/10/20/65日</b>＝近 N 個<b>交易日</b>（非日曆天，約 65 日 = 一季）的區間聚合，區間 [d1, d2]：d2＝最近交易日、d1＝往前第 N 個交易日。</p>
+    <h4>各欄位在「區間模式」下的口徑</h4>
+    <p>關鍵：<b>流量類（買賣超）整段加總；存量／狀態類（持股、比率、乖離）取結束當天 d2 的值。</b></p>
+    <table>
+      <thead><tr><th>欄位</th><th>區間 [d1, d2] 定義</th></tr></thead>
+      <tbody>
+        <tr><td>買賣超金額／張數</td><td>Σ 區間內逐日加總</td></tr>
+        <tr><td>持股(張)、持股比率%、外資持股</td><td>d2 末日值（快照，不加總）</td></tr>
+        <tr><td>持股變動%</td><td>Σ區間買賣超張 ÷ 發行張數</td></tr>
+        <tr><td>漲跌%</td><td>close(d2) ÷ close(d1前一交易日) − 1</td></tr>
+        <tr><td>佔成交量%</td><td>Σ買賣超張 ÷ Σ成交量</td></tr>
+        <tr><td>乖離月線%</td><td>d2 末日值（收盤對 20 日均線）</td></tr>
+      </tbody>
+    </table>
+    <p class="note">註：目前歷史資料約 65 個交易日，「65日」≈ 全部資料；投信庫存類欄位自 2026-05-01 起才有效，更早日期為空，隨每日累積後自然補滿。區間上限為 65 交易日（涵蓋一季）。</p>
+  </div>
+</div>
 <main id="main"><div class="loading">載入中…</div></main>
 <footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例）</footer>
 
@@ -274,6 +313,12 @@ document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
   }
   render();
 });
+// ---------- info overlay ----------
+const overlay = document.getElementById("overlay");
+document.getElementById("infoBtn").onclick = ()=>overlay.classList.add("show");
+document.getElementById("infoClose").onclick = ()=>overlay.classList.remove("show");
+overlay.onclick = e=>{ if(e.target===overlay) overlay.classList.remove("show"); };
+
 boot();
 </script>
 </body>
