@@ -173,6 +173,7 @@
     <div class="mode" data-mode="lastmonth">上月</div>
     <div class="mode" data-mode="custom">自訂區間</div>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
+    <button class="info-btn" id="xlsxBtn">⬇ 下載 Excel</button>
   </div>
   <div class="daterow" id="daterow"></div>
   <div id="totbar" class="fcard" style="display:none"></div>
@@ -209,6 +210,7 @@
 <main id="main"><div class="loading">載入中…</div></main>
 <footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例）</footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
@@ -742,6 +744,117 @@ async function runCustomRange(startStr,endStr,kind="custom"){
   state.customMeta={d1,d2,n:inRange.length,truncated,kind};
   render();
 }
+
+// ================= Excel 匯出（列印導向：A3 橫向、欄寬自動、同類表同頁）=================
+// 欄位定義工廠（含 Excel 數值格式與欄寬，列印無須再手動調整）
+const xT=(h,k)=>({h,v:r=>r[k]==null?"":r[k],w:h==="名稱"?16:9,left:true});
+const xA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:13});   // 千元→億
+const xAM=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:13});  // 百萬→億
+const xL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:11});             // 張
+const xP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.00"%"',w:9});            // %
+const INST_COLS=[xT("代號","code"),xT("名稱","name"),xA("買賣超","net_amt_k"),xL("張數","net_lots"),
+  xP("持股變動","chg_hold_pct"),xP("持股比率","hold_pct"),xL("持股張數","hold_lots"),
+  xAM("持股市值","hold_value_m"),xP("佔成交量","vol_ratio"),xP("漲跌","chg_pct"),xP("乖離月線","bias20")];
+const SYNC_COLS=[xT("代號","code"),xT("名稱","name"),xA("投信金額","t_amt_k"),xL("投信張","t_net"),
+  xA("外資金額","f_amt_k"),xL("外資張","f_net"),xA("加總金額","sum_amt_k"),xA("同步強度","strength_k"),xP("漲跌","chg_pct")];
+const OPP_COLS=[xT("代號","code"),xT("名稱","name"),xA("外資金額","f_amt_k"),xL("外資張","f_net"),
+  xA("投信金額","t_amt_k"),xL("投信張","t_net"),xA("對作強度","strength_k"),xP("漲跌","chg_pct")];
+const ETFM_COLS=[xT("代號","code"),xT("名稱","name"),xA("市值","mktcap_k"),xA("外資持股市值","f_hold_value_k"),
+  xA("投信持股市值","t_hold_value_k"),xA("其他","other_value_k"),xP("漲跌","chg_pct")];
+
+const xlThin={style:"thin",color:{argb:"FFBBBBBB"}};
+const xlBorder={top:xlThin,left:xlThin,bottom:xlThin,right:xlThin};
+function xlTable(ws, start, title, cols, rows, W){
+  const t=ws.getCell(start,1); t.value=title; t.font={bold:true,size:12,color:{argb:"FF0B6E9E"}};
+  const hr=start+1;
+  cols.forEach((c,i)=>{ const cell=ws.getCell(hr,i+1);
+    cell.value=c.h; cell.font={bold:true,color:{argb:"FFFFFFFF"}};
+    cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF1F4E79"}};
+    cell.alignment={horizontal:c.left?"left":"right"}; cell.border=xlBorder;
+    W[i]=Math.max(W[i]||0,c.w); });
+  (rows||[]).forEach((r,ri)=>{ cols.forEach((c,i)=>{ const cell=ws.getCell(hr+1+ri,i+1);
+    const v=c.v(r); cell.value=(v===""||v==null)?null:v; if(c.fmt) cell.numFmt=c.fmt;
+    cell.alignment={horizontal:c.left?"left":"right"}; cell.border=xlBorder;
+    W[i]=Math.max(W[i]||0,c.w); }); });
+  return hr+1+(rows?rows.length:0)+1;   // 下一表起始列（留 1 空列）
+}
+function xlApplyWidth(ws,W){ W.forEach((w,i)=>{ ws.getColumn(i+1).width=w||10; }); }
+function xlSheet(wb,name){
+  return wb.addWorksheet(name,{pageSetup:{paperSize:8,orientation:"landscape",fitToPage:true,
+    fitToWidth:1,fitToHeight:0,margins:{left:0.3,right:0.3,top:0.4,bottom:0.4,header:0.2,footer:0.2}},
+    views:[{showGridLines:false}]});
+}
+function currentRangeDates(){
+  const cal=state.meta?state.meta.calendar:[];
+  if(state.mode==="1d") return [state.latest.date];
+  if(["custom","thisweek","lastweek","lastmonth"].includes(state.mode))
+    return state.customMeta?cal.filter(d=>d>=state.customMeta.d1&&d<=state.customMeta.d2):[];
+  if(state.ranges && state.ranges.windows[state.mode]){ const w=state.ranges.windows[state.mode];
+    return cal.filter(d=>d>=w.start&&d<=w.end); }
+  return [state.latest.date];
+}
+function periodText(){
+  const el=document.getElementById("daterow"); return el?el.textContent.replace(/重選區間/,"").trim():"";
+}
+async function buildExcel(){
+  if(typeof ExcelJS==="undefined"){ alert("Excel 函式庫尚未載入，請稍候再試"); return; }
+  const pages=currentPages();
+  if(!pages){ alert("請先選擇區間並查詢，再下載"); return; }
+  const btn=document.getElementById("xlsxBtn"); const old=btn.textContent; btn.textContent="產生中…";
+  try{
+    const wb=new ExcelJS.Workbook();
+    const pd=periodText();
+    // Sheet 1：外資・投信進出（依金額）
+    let ws=xlSheet(wb,"外資投信進出"), W=[], row=1;
+    ws.getCell(row,1).value="外資・投信進出　"+pd; ws.getCell(row,1).font={bold:true,size:14}; row+=2;
+    row=xlTable(ws,row,"外資買超 Top"+(pages.foreign.buy_by_amt.length),INST_COLS,pages.foreign.buy_by_amt,W);
+    row=xlTable(ws,row,"外資賣超 Top"+(pages.foreign.sell_by_amt.length),INST_COLS,pages.foreign.sell_by_amt,W);
+    row=xlTable(ws,row,"投信買超 Top"+(pages.trust.buy_by_amt.length),INST_COLS,pages.trust.buy_by_amt,W);
+    row=xlTable(ws,row,"投信賣超 Top"+(pages.trust.sell_by_amt.length),INST_COLS,pages.trust.sell_by_amt,W);
+    xlApplyWidth(ws,W);
+    // Sheet 2：同步與對作
+    ws=xlSheet(wb,"同步與對作"); W=[]; row=1;
+    ws.getCell(row,1).value="外資投信 同步與對作　"+pd; ws.getCell(row,1).font={bold:true,size:14}; row+=2;
+    row=xlTable(ws,row,"同步買超 Top"+(pages.sync.sync_buy.length),SYNC_COLS,pages.sync.sync_buy,W);
+    row=xlTable(ws,row,"同步賣超 Top"+(pages.sync.sync_sell.length),SYNC_COLS,pages.sync.sync_sell,W);
+    row=xlTable(ws,row,"外資買·投信賣 Top"+(pages.oppose.f_buy_t_sell.length),OPP_COLS,pages.oppose.f_buy_t_sell,W);
+    row=xlTable(ws,row,"外資賣·投信買 Top"+(pages.oppose.f_sell_t_buy.length),OPP_COLS,pages.oppose.f_sell_t_buy,W);
+    xlApplyWidth(ws,W);
+    // Sheet 3：ETF 與大盤資金
+    ws=xlSheet(wb,"ETF與大盤"); W=[]; row=1;
+    ws.getCell(row,1).value="ETF 市值與大盤資金　"+pd; ws.getCell(row,1).font={bold:true,size:14}; row+=2;
+    row=xlTable(ws,row,"股票型 ETF 市值 Top"+(pages.etf.mktcap_stock.length),ETFM_COLS,pages.etf.mktcap_stock,W);
+    row=xlTable(ws,row,"債券/平衡型 ETF 市值 Top"+(pages.etf.mktcap_bond.length),ETFM_COLS,pages.etf.mktcap_bond,W);
+    // 三大法人（區間合計）
+    if(state.totals){
+      const dts=currentRangeDates();
+      const tot=mkt=>{const s=computeTot(dts,mkt);return {mkt:{tse:"上市",otc:"上櫃",all:"合計"}[mkt],
+        f_buy:s.f_buy,f_sell:s.f_sell,f_net:s.f_net,t_buy:s.t_buy,t_sell:s.t_sell,t_net:s.t_net,d_buy:s.d_buy,d_sell:s.d_sell,d_net:s.d_net};};
+      const TOT_COLS=[{h:"市場",v:r=>r.mkt,w:8,left:true},
+        xA("外資買","f_buy"),xA("外資賣","f_sell"),xA("外資淨","f_net"),
+        xA("投信買","t_buy"),xA("投信賣","t_sell"),xA("投信淨","t_net"),
+        xA("自營買","d_buy"),xA("自營賣","d_sell"),xA("自營淨","d_net")];
+      row=xlTable(ws,row,"三大法人買賣超（區間合計）",TOT_COLS,["tse","otc","all"].map(tot),W);
+    }
+    // 台指期外資未平倉
+    const d2=modeD2(); const cur=d2?await fetchTxOI(d2):null;
+    if(cur){
+      const FUT_COLS=[{h:"項目",v:r=>r.k,w:18,left:true},{h:"數值",v:r=>r.v,w:14,left:true}];
+      row=xlTable(ws,row,"台指期 外資未平倉（資料日 "+d2+"）",FUT_COLS,
+        [{k:"未平倉口數淨額",v:cur.lots},{k:"金額淨額(億)",v:Math.round(cur.amt/1e5*10)/10}],W);
+    }
+    xlApplyWidth(ws,W);
+
+    const buf=await wb.xlsx.writeBuffer();
+    const stamp=(state.latest.date||"").replace(/-/g,"")+"_"+state.mode;
+    const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url=URL.createObjectURL(blob); const a=document.createElement("a");
+    a.href=url; a.download="taiwan-flows_"+stamp+".xlsx"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+  }catch(e){ alert("產生 Excel 失敗："+e); }
+  finally{ btn.textContent=old; }
+}
+document.getElementById("xlsxBtn").onclick=buildExcel;
 
 // ---------- info overlay ----------
 const overlay = document.getElementById("overlay");
