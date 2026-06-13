@@ -9,3 +9,6 @@ __pycache__/
 # os
 Thumbs.db
 .DS_Store
+
+# local run logs
+logs_backfill.txt
