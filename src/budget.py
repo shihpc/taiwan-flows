@@ -246,6 +246,24 @@ def page_sync(agg: dict) -> dict:
             "trust_vol_share": vol_share("t"), "foreign_vol_share": vol_share("f")}
 
 
+def page_oppose(agg: dict) -> dict:
+    """外資與投信對作頁：兩者反方向（一買一賣）。同步頁的鏡像。"""
+    rows = list(agg.values())
+    f_buy_t_sell = [a for a in rows if a["f_net"] > 0 and a["t_net"] < 0]  # 外資買·投信賣
+    f_sell_t_buy = [a for a in rows if a["f_net"] < 0 and a["t_net"] > 0]  # 外資賣·投信買
+
+    def row(a):
+        return {"code": a["code"], "name": a["name"],
+                "t_amt_k": a["t_amt"], "t_net": a["t_net"],
+                "f_amt_k": a["f_amt"], "f_net": a["f_net"],
+                "chg_pct": a["chg_pct"]}
+
+    # 以外資金額絕對值排序（外資為主導力量，對作越大越前）
+    fb = sorted(f_buy_t_sell, key=lambda a: a["f_amt"], reverse=True)[:30]
+    fs = sorted(f_sell_t_buy, key=lambda a: a["f_amt"])[:30]
+    return {"f_buy_t_sell": [row(a) for a in fb], "f_sell_t_buy": [row(a) for a in fs]}
+
+
 # ════════════════════════════════════════════════════════════════
 # 外資頁台指期未平倉卡
 # ════════════════════════════════════════════════════════════════
@@ -282,6 +300,7 @@ def build_view(dates: list[str], docs: dict, meta: dict, n: int) -> dict:
         "trust": page_inst(agg, "t"),
         "foreign": {**page_inst(agg, "f"), "futures_card": foreign_futures_card(dates, d2)},
         "sync": page_sync(agg),
+        "oppose": page_oppose(agg),
     }
 
 

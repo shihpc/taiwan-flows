@@ -101,6 +101,7 @@
     <div class="tab" data-tab="foreign">外資進出</div>
     <div class="tab" data-tab="trust">投信進出</div>
     <div class="tab" data-tab="sync">同步買賣超</div>
+    <div class="tab" data-tab="oppose">外資投信對作</div>
     <div class="tab" data-tab="etf">ETF</div>
   </div>
   <div class="modes" id="modes">
@@ -139,7 +140,7 @@
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null,
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
-        sync:{side:"buy"}, etf:{rank:"turnover"} } };
+        sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"turnover"} } };
 
 // ---------- formatters ----------
 // 億值格式：<10億顯示2位小數（小額保精度），其餘整數加千分位
@@ -246,6 +247,22 @@ function renderSync(page){
     <div><div class="sub">外資佔成交量 Top10</div>${table(shareCols,page.foreign_vol_share)}</div></div>`;
   return html;
 }
+function renderOppose(page){
+  const s = state.sub.oppose;
+  const rows = s.side==="fbuy"?page.f_buy_t_sell:page.f_sell_t_buy;
+  const cols=[COL_CODE,COL_NAME,
+    {h:"外資金額",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
+    {h:"外資張",f:r=>sign(r.f_net,fmtLot(r.f_net))},
+    {h:"投信金額",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},
+    {h:"投信張",f:r=>sign(r.t_net,fmtLot(r.t_net))},
+    {h:"漲跌",f:r=>chg(r.chg_pct)}];
+  let html=`<div class="toggles"><div class="seg" data-seg="side">
+    <button data-v="fbuy" class="${s.side==="fbuy"?"active":""}">外資買·投信賣</button>
+    <button data-v="fsell" class="${s.side==="fsell"?"active":""}">外資賣·投信買</button></div></div>`;
+  html += `<div class="muted" style="font-size:11px;margin-bottom:6px">外資與投信方向相反（聰明錢分歧），依外資金額排序 Top30</div>`;
+  html += table(cols, rows);
+  return html;
+}
 function renderEtf(page){
   const s=state.sub.etf;
   const card=(title,g)=>`<div class="stat"><h4>${title}（${g.count}）</h4>
@@ -287,6 +304,7 @@ function render(){
   if(state.tab==="foreign") html=renderInst(pages.foreign,"foreign");
   else if(state.tab==="trust") html=renderInst(pages.trust,"trust");
   else if(state.tab==="sync") html=renderSync(pages.sync);
+  else if(state.tab==="oppose") html=renderOppose(pages.oppose);
   else if(state.tab==="etf") html=renderEtf(pages.etf);
   main.innerHTML = html;
   bindSegs();
@@ -297,6 +315,7 @@ function bindSegs(){
       const which=seg.dataset.seg, v=b.dataset.v;
       if(state.tab==="etf") state.sub.etf.rank=v;
       else if(state.tab==="sync") state.sub.sync.side=v;
+      else if(state.tab==="oppose") state.sub.oppose.side=v;
       else state.sub[state.tab][which==="side"?"side":"rank"]=v;
       render();
     });
