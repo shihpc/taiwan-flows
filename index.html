@@ -44,6 +44,7 @@
   /* futures card */
   .fcard{display:flex;gap:14px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);
     border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  #futbar{margin:8px 0 6px}
   .fcard .k{color:var(--dim);font-size:11px}
   .fcard .v{font-size:16px;font-weight:700}
   /* stat cards */
@@ -70,8 +71,10 @@
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
     color:var(--accent);border-radius:14px;cursor:pointer;font-size:12px;font-family:inherit}
-  .datebig{flex:0 0 auto;margin-left:auto;align-self:center;white-space:nowrap;padding:0 10px;
+  .daterow{display:flex;align-items:center;gap:10px;padding:7px 10px 9px;
     font-size:15px;font-weight:700;color:var(--accent);letter-spacing:.3px}
+  .daterow button{margin-left:auto;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);
+    border-radius:6px;padding:3px 12px;font-family:inherit;font-weight:400;font-size:12px;cursor:pointer}
   .overlay{position:fixed;inset:0;background:#000c;z-index:50;display:none;
     align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
   .overlay.show{display:flex}
@@ -113,6 +116,7 @@
     <span class="brand">台股資金流<b> taiwan-flows</b></span>
     <span class="status" id="status">載入中</span>
   </div>
+  <div id="futbar" class="fcard" style="display:none"></div>
   <div class="tabs" id="tabs">
     <div class="tab" data-tab="foreign">外資進出</div>
     <div class="tab" data-tab="trust">投信進出</div>
@@ -129,9 +133,9 @@
     <div class="mode" data-mode="thisweek">本週</div>
     <div class="mode" data-mode="lastweek">上週</div>
     <div class="mode" data-mode="custom">自訂區間</div>
-    <span class="datebig" id="date"></span>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
   </div>
+  <div class="daterow" id="daterow"></div>
 </header>
 
 <div class="overlay" id="overlay">
@@ -179,7 +183,6 @@ const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_bla
 async function boot(){
   try{
     state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
-    document.getElementById("date").textContent = state.latest.date;
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
   try{
@@ -228,14 +231,6 @@ function renderInst(page, tab){
   const key = (s.side==="buy"?"buy":"sell")+"_by_"+(s.rank==="amt"?"amt":"chg");
   const rows = page[key]||[];
   let html = "";
-  if(tab==="foreign" && page.futures_card){
-    const c=page.futures_card;
-    html += `<div class="fcard">
-      <div><div class="k">台指期 外資未平倉</div><div class="v">${sign(c.oi_net_lots,fmtLot(c.oi_net_lots)+" 口")}</div></div>
-      <div><div class="k">金額淨額</div><div class="v">${sign(c.oi_net_amount_k,fmtYi(c.oi_net_amount_k))}</div></div>
-      ${c.vs_prev_month_lots!=null?`<div><div class="k">vs 前月底(${c.prev_month_end})</div><div class="v">${sign(c.vs_prev_month_lots,fmtLot(c.vs_prev_month_lots)+" 口")}</div></div>`:""}
-    </div>`;
-  }
   html += `<div class="toggles">
     <div class="seg" data-seg="side">
       <button data-v="buy" class="${s.side==="buy"?"active":""}">買超</button>
@@ -322,41 +317,48 @@ function renderEtf(page){
 }
 
 function updateDateLabel(){
-  const el=document.getElementById("date");
-  const wk={thisweek:"本週",lastweek:"上週",custom:""};
-  if(state.mode==="1d"){ el.textContent="資料日 "+state.latest.date; }
+  const el=document.getElementById("daterow");
+  const wk={thisweek:"本週",lastweek:"上週",custom:"自訂區間"};
+  let txt="", repick=false;
+  if(state.mode==="1d"){ txt="資料日 "+state.latest.date; }
   else if(state.mode in wk){
-    el.textContent = state.customMeta
-      ? `${wk[state.mode]} ${state.customMeta.d1} ~ ${state.customMeta.d2}·${state.customMeta.n}日`.trim()
-      : (wk[state.mode]||"自訂區間");
+    if(state.customMeta){
+      const cm=state.customMeta;
+      txt=`${wk[cm.kind||"custom"]} ${cm.d1} ~ ${cm.d2}（${cm.n} 交易日）`+(cm.truncated?" · 已截斷為最近 65 日":"");
+      repick = cm.kind==="custom";
+    } else { txt=wk[state.mode]; }
   } else if(state.ranges && state.ranges.windows[state.mode]){
     const w=state.ranges.windows[state.mode];
-    el.textContent = `${w.start} ~ ${w.end}·${w.trading_days}日`;
+    txt=`${w.start} ~ ${w.end}（${w.trading_days} 交易日）`;
   }
+  el.innerHTML=`<span>${txt}</span>`+(repick?`<button id="rRepick">重選區間</button>`:``);
+  const rp=document.getElementById("rRepick");
+  if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
+}
+function updateFutbar(pages){
+  const el=document.getElementById("futbar");
+  const c = pages && pages.foreign && pages.foreign.futures_card;
+  if(!c){ el.style.display="none"; el.innerHTML=""; return; }
+  el.style.display="flex";
+  el.innerHTML=`<div><div class="k">台指期 外資未平倉</div><div class="v">${sign(c.oi_net_lots,fmtLot(c.oi_net_lots)+" 口")}</div></div>`
+    +`<div><div class="k">金額淨額</div><div class="v">${sign(c.oi_net_amount_k,fmtYi(c.oi_net_amount_k))}</div></div>`
+    +(c.vs_prev_month_lots!=null?`<div><div class="k">vs 前月底(${c.prev_month_end})</div><div class="v">${sign(c.vs_prev_month_lots,fmtLot(c.vs_prev_month_lots)+" 口")}</div></div>`:``);
 }
 function render(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
   updateDateLabel();
-  if(state.mode==="custom" && !state.customPages){ renderPicker(); return; }
+  if(state.mode==="custom" && !state.customPages){ updateFutbar(null); renderPicker(); return; }
   const pages = currentPages();
+  updateFutbar(pages);
   const main = document.getElementById("main");
   let html="";
-  if((state.mode==="custom"||state.mode==="thisweek"||state.mode==="lastweek") && state.customMeta){
-    const cm=state.customMeta;
-    const klabel={thisweek:"本週",lastweek:"上週",custom:"自訂區間"}[cm.kind||"custom"];
-    html+=`<div class="rbanner">${klabel} <b>${cm.d1} ~ ${cm.d2}</b>（${cm.n} 交易日）`
-      +(cm.truncated?` <span class="muted">已截斷為最近 65 日</span>`:``)
-      +(cm.kind==="custom"?` <button id="rRepick">重選區間</button>`:``)+`</div>`;
-  }
   if(state.tab==="foreign") html+=renderInst(pages.foreign,"foreign");
   else if(state.tab==="trust") html+=renderInst(pages.trust,"trust");
   else if(state.tab==="sync") html+=renderSync(pages.sync);
   else if(state.tab==="oppose") html+=renderOppose(pages.oppose);
   else if(state.tab==="etf") html+=renderEtf(pages.etf);
   main.innerHTML = html;
-  const rp=document.getElementById("rRepick");
-  if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
   bindSegs();
 }
 function bindSegs(){
