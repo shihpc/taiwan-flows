@@ -70,6 +70,8 @@
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
     color:var(--accent);border-radius:14px;cursor:pointer;font-size:12px;font-family:inherit}
+  .datebig{flex:0 0 auto;margin-left:auto;align-self:center;white-space:nowrap;padding:0 10px;
+    font-size:15px;font-weight:700;color:var(--accent);letter-spacing:.3px}
   .overlay{position:fixed;inset:0;background:#000c;z-index:50;display:none;
     align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
   .overlay.show{display:flex}
@@ -109,7 +111,6 @@
 <header>
   <div class="titlerow">
     <span class="brand">台股資金流<b> taiwan-flows</b></span>
-    <span class="date" id="date">—</span>
     <span class="status" id="status">載入中</span>
   </div>
   <div class="tabs" id="tabs">
@@ -125,7 +126,10 @@
     <div class="mode" data-mode="r10">10日</div>
     <div class="mode" data-mode="r20">20日</div>
     <div class="mode" data-mode="r65">65日</div>
+    <div class="mode" data-mode="thisweek">本週</div>
+    <div class="mode" data-mode="lastweek">上週</div>
     <div class="mode" data-mode="custom">自訂區間</div>
+    <span class="datebig" id="date"></span>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
   </div>
 </header>
@@ -193,7 +197,7 @@ async function ensureRanges(){
 }
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
-  if(state.mode==="custom") return state.customPages;
+  if(state.mode==="custom"||state.mode==="thisweek"||state.mode==="lastweek") return state.customPages;
   return state.ranges.windows[state.mode].pages;
 }
 
@@ -319,9 +323,12 @@ function renderEtf(page){
 
 function updateDateLabel(){
   const el=document.getElementById("date");
+  const wk={thisweek:"本週",lastweek:"上週",custom:""};
   if(state.mode==="1d"){ el.textContent="資料日 "+state.latest.date; }
-  else if(state.mode==="custom"){
-    el.textContent = state.customMeta ? `${state.customMeta.d1} ~ ${state.customMeta.d2}·${state.customMeta.n}日` : "自訂區間";
+  else if(state.mode in wk){
+    el.textContent = state.customMeta
+      ? `${wk[state.mode]} ${state.customMeta.d1} ~ ${state.customMeta.d2}·${state.customMeta.n}日`.trim()
+      : (wk[state.mode]||"自訂區間");
   } else if(state.ranges && state.ranges.windows[state.mode]){
     const w=state.ranges.windows[state.mode];
     el.textContent = `${w.start} ~ ${w.end}·${w.trading_days}日`;
@@ -335,11 +342,12 @@ function render(){
   const pages = currentPages();
   const main = document.getElementById("main");
   let html="";
-  if(state.mode==="custom" && state.customMeta){
+  if((state.mode==="custom"||state.mode==="thisweek"||state.mode==="lastweek") && state.customMeta){
     const cm=state.customMeta;
-    html+=`<div class="rbanner">自訂區間 <b>${cm.d1} ~ ${cm.d2}</b>（${cm.n} 交易日）`
+    const klabel={thisweek:"本週",lastweek:"上週",custom:"自訂區間"}[cm.kind||"custom"];
+    html+=`<div class="rbanner">${klabel} <b>${cm.d1} ~ ${cm.d2}</b>（${cm.n} 交易日）`
       +(cm.truncated?` <span class="muted">已截斷為最近 65 日</span>`:``)
-      +`<button id="rRepick">重選區間</button></div>`;
+      +(cm.kind==="custom"?` <button id="rRepick">重選區間</button>`:``)+`</div>`;
   }
   if(state.tab==="foreign") html+=renderInst(pages.foreign,"foreign");
   else if(state.tab==="trust") html+=renderInst(pages.trust,"trust");
@@ -367,14 +375,24 @@ function bindSegs(){
 // ---------- nav ----------
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{ state.tab=t.dataset.tab; render(); });
 document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
-  state.mode=m.dataset.mode;
-  if(state.mode==="custom"){
+  const mode=m.dataset.mode;
+  state.mode=mode;
+  if(mode==="custom"){
     document.getElementById("main").innerHTML='<div class="loading">載入交易日曆…</div>';
     await loadMeta();
-    render();  // shows picker if no customPages yet
+    // 從本週/上週切回自訂時，清掉預設結果，回到日期選擇器
+    if(state.customMeta && state.customMeta.kind!=="custom"){ state.customPages=null; state.customMeta=null; }
+    render();
     return;
   }
-  if(state.mode!=="1d"){
+  if(mode==="thisweek"||mode==="lastweek"){
+    document.getElementById("main").innerHTML='<div class="loading">載入週資料…</div>';
+    await loadMeta();
+    const {start,end}=weekRange(mode);
+    await runCustomRange(start,end,mode);
+    return;
+  }
+  if(mode!=="1d"){
     document.getElementById("main").innerHTML='<div class="loading">載入區間…</div>';
     await ensureRanges();
   }
@@ -495,12 +513,26 @@ function setProg(i,n){
   if(w){ w.style.display="block"; b.style.width=Math.round(i/n*100)+"%"; }
   if(m) m.textContent=`載入交易日 ${i}/${n} …`;
 }
-async function runCustomRange(startStr,endStr){
+function pickerMsg(txt){ const m=document.getElementById("cMsg"); if(m) m.textContent=txt;
+  else document.getElementById("main").innerHTML=`<div class="loading">${txt}</div>`; }
+// 以最近資料日為錨，回傳本週/上週的日曆起訖（YYYY-MM-DD）
+function weekRange(which){
+  const cal=state.meta.calendar, d2s=cal[cal.length-1];
+  const [y,m,d]=d2s.split("-").map(Number), dt=new Date(y,m-1,d);
+  const dow=(dt.getDay()+6)%7;  // 0=週一 … 6=週日
+  const mon=new Date(dt); mon.setDate(dt.getDate()-dow);
+  const fmt=x=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+  if(which==="thisweek") return {start:fmt(mon), end:d2s};           // 當週一 → 最近資料日
+  const lm=new Date(mon); lm.setDate(mon.getDate()-7);               // 前週一
+  const lf=new Date(lm); lf.setDate(lm.getDate()+4);                 // 前週五
+  return {start:fmt(lm), end:fmt(lf)};
+}
+async function runCustomRange(startStr,endStr,kind="custom"){
   await loadMeta();
   const cal=state.meta.calendar;
-  if(!startStr||!endStr||startStr>endStr){ document.getElementById("cMsg").textContent="請選擇有效的起迄日"; return; }
+  if(!startStr||!endStr||startStr>endStr){ pickerMsg("請選擇有效的起迄日"); return; }
   let inRange=cal.filter(d=>d>=startStr&&d<=endStr);
-  if(inRange.length===0){ document.getElementById("cMsg").textContent="區間內無交易日資料"; return; }
+  if(inRange.length===0){ pickerMsg("區間內無交易日資料"); return; }
   let truncated=false;
   if(inRange.length>65){ inRange=inRange.slice(-65); truncated=true; }
   const d1=inRange[0], d2=inRange[inRange.length-1];
@@ -522,7 +554,7 @@ async function runCustomRange(startStr,endStr){
   });
   state.customPages={etf:jPageEtf(agg),trust:jPageInst(agg,"t"),
     foreign:{...jPageInst(agg,"f"),futures_card:futures},sync:jPageSync(agg),oppose:jPageOppose(agg)};
-  state.customMeta={d1,d2,n:inRange.length,truncated};
+  state.customMeta={d1,d2,n:inRange.length,truncated,kind};
   render();
 }
 
