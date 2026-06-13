@@ -222,6 +222,23 @@ def build_rows(d: str, dfs, prev_inv: dict[str, float], meta: dict) -> list:
 # meta calendar
 # ════════════════════════════════════════════════════════════════
 
+def update_issued_lots(meta: dict, share) -> int:
+    """用當日 Shareholding 的 NumberOfSharesIssued 更新 meta 發行張數（現值，
+    補上 baseline 後新上市/新發行的標的，如主動式 ETF）。"""
+    if share is None or share.empty:
+        return 0
+    share = share.copy()
+    share["stock_id"] = share["stock_id"].astype(str)
+    n = 0
+    for _, r in share.iterrows():
+        code = r["stock_id"]
+        v = r.get("NumberOfSharesIssued")
+        if code in meta["stocks"] and pd.notna(v) and float(v) > 0:
+            meta["stocks"][code]["issued_lots"] = round(float(v) / 1000.0, 1)
+            n += 1
+    return n
+
+
 def append_calendar(d: str, meta: dict) -> None:
     cal = set(meta.get("calendar", []))
     cal.add(d)
@@ -254,6 +271,9 @@ def run_date(d: str) -> bool:
     out = {"date": d, "cols": COLS, "rows": rows}
     out_path = DAILY_DIR / f"{d.replace('-', '')}.json"
     out_path.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    n_iss = update_issued_lots(meta, dfs[2])  # 以現值更新發行張數
+    if n_iss:
+        logger.info(f"更新發行張數 {n_iss} 檔（Shareholding）")
     append_calendar(d, meta)
 
     size_kb = out_path.stat().st_size / 1024
