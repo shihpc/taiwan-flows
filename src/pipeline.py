@@ -30,6 +30,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from finmind import fm_get  # noqa: E402
+from futures import fetch_futures  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("pipeline")
@@ -257,6 +258,15 @@ def run_date(d: str) -> bool:
     size_kb = out_path.stat().st_size / 1024
     n_inv = sum(1 for r in rows if r[COLS.index("t_inv")] is not None)
     logger.info(f"已寫入 {out_path.relative_to(ROOT)}（{len(rows)} 檔, {size_kb:.0f} KB, t_inv 有效 {n_inv}）")
+
+    # 期貨三大法人（外資頁台指期卡用）— 非致命，缺漏不影響當日 daily
+    try:
+        if fetch_futures(d) is not None:
+            logger.info(f"已存期貨 data/futures/{d.replace('-', '')}.json")
+        else:
+            logger.warning(f"{d} 期貨資料尚未更新，略過")
+    except Exception as e:
+        logger.warning(f"{d} 期貨抓取失敗（略過）：{e}")
     return True
 
 

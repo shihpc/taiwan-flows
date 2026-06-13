@@ -1,0 +1,68 @@
+name: daily-flows
+
+on:
+  schedule:
+    # 17:30 台北 = 09:30 UTC，週一~週五（非交易日由程式自行跳過）
+    - cron: "30 9 * * 1-5"
+  workflow_dispatch: {}   # GitHub App 手動觸發
+
+# 讓 GITHUB_TOKEN 能 push commit
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-flows
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run daily pipeline + budget (retry up to 3x / 10min)
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: |
+          status=""
+          for attempt in 1 2 3; do
+            echo "::group::attempt $attempt"
+            python src/run_daily.py || echo "run_daily 非零退出（將依 status 判斷重試）"
+            echo "::endgroup::"
+            status=$(python -c "import json;print(json.load(open('data/status.json'))['status'])" 2>/dev/null || echo error)
+            echo "status=$status"
+            if [ "$status" = "ok" ] || [ "$status" = "no_data" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "資料未就緒/錯誤，10 分鐘後重試…"
+              sleep 600
+            fi
+          done
+          # 三次仍 error 才讓 job 失敗（觸發 Actions 失敗通知信）
+          if [ "$status" = "error" ]; then
+            echo "::error::三次嘗試後仍失敗"
+            exit 1
+          fi
+
+      - name: Commit & push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "無變更，略過 commit"
+          else
+            d=$(python -c "import json;print(json.load(open('data/status.json'))['date'])")
+            git commit -m "data: $d daily flows [skip ci]"
+            git push
+          fi
