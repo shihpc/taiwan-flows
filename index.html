@@ -399,7 +399,7 @@ function renderEtf(page){
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   const cols = s.rank==="turnover"?turnoverCols:mktcapCols;
   const key = (s.rank==="turnover"?"turnover_":"mktcap_") + (s.type==="bond"?"bond":"stock");
-  const label = s.type==="bond" ? "債券型 ETF（B 結尾）" : "股票型 ETF（非 B 結尾）";
+  const label = s.type==="bond" ? "債券/平衡型 ETF（名稱含債或 B/D/T 結尾）" : "股票型 ETF（其餘）";
   html+=`<div class="sub">${label}</div>${table(cols,page[key])}`;
   return html;
 }
@@ -646,7 +646,7 @@ function jPageInst(agg,side){
 }
 function jPageEtf(agg){
   const etfs=Object.values(agg).filter(a=>a.is_etf);
-  const isBond=a=>a.code.endsWith("B"), mc=a=>a.issued_lots?Math.round(a.issued_lots*a.close):0;
+  const isBond=a=>"BDT".includes(a.code.slice(-1))||a.name.includes("債"), mc=a=>a.issued_lots?Math.round(a.issued_lots*a.close):0;
   const stats=g=>({count:g.length,mktcap_k:g.reduce((s,a)=>s+mc(a),0),turnover_k:g.reduce((s,a)=>s+a.amt,0),
     f_amt_k:g.reduce((s,a)=>s+a.f_amt,0),t_amt_k:g.reduce((s,a)=>s+a.t_amt,0),d_amt_k:g.reduce((s,a)=>s+a.d_amt,0),
     other_amt_k:-g.reduce((s,a)=>s+a.f_amt+a.t_amt+a.d_amt,0)});

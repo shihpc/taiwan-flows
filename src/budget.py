@@ -182,8 +182,8 @@ def page_inst(agg: dict, side: str) -> dict:
 def page_etf(agg: dict) -> dict:
     etfs = [a for a in agg.values() if a["is_etf"]]
 
-    def is_bond(a):  # 債券型 ETF 判別：代號 B 結尾（如 00679B、00772B）
-        return a["code"].endswith("B")
+    def is_bond(a):  # 債券/固收/平衡型：名稱含「債」或 代號結尾 B(債券)/D(主動債)/T(平衡)
+        return a["code"][-1] in ("B", "D", "T") or "債" in a["name"]
 
     def mktcap_k(a):
         return round(a["issued_lots"] * a["close"]) if a["issued_lots"] else 0
