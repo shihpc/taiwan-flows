@@ -1,47 +1,81 @@
 # src/totals.py
-# 市場總三大法人買賣超（item 4 三大法人卡用）
+# 市場三大法人買賣超（三大法人卡用）— 資料源：證交所 BFI82U 三大法人買賣金額總表
 #
-# FinMind TaiwanStockTotalInstitutionalInvestors（全市場合計，金額單位「元」）
-#   names: Foreign_Investor, Foreign_Dealer_Self, Investment_Trust,
-#          Dealer_self, Dealer_Hedging, total
-#   外資 = Foreign_Investor + Foreign_Dealer_Self
-#   投信 = Investment_Trust
-#   自營 = Dealer_self + Dealer_Hedging
-#   net = buy − sell，本檔統一存「千元」
+# 改用證交所官方數字（FinMind 的 TaiwanStockTotalInstitutionalInvestors 在
+# 部分日期會修訂出與官方/自身逐檔不一致的投信數，故直接抓 TWSE）。
 #
-# 輸出 data/totals.json：{"dates":[...], "rows":{date:{f_net_k,t_net_k,d_net_k}}}
+# BFI82U JSON: https://www.twse.com.tw/rwd/zh/fund/BFI82U?dayDate=YYYYMMDD&type=day&response=json
+#   fields = 單位名稱, 買進金額, 賣出金額, 買賣差額（單位：元）
+#   外資 = 外資及陸資(不含外資自營商) + 外資自營商
+#   投信 = 投信
+#   自營 = 自營商(自行買賣) + 自營商(避險)
+#
+# 輸出 data/totals.json：{"dates":[...], "rows":{date:{f/t/d_buy_k, _sell_k, _net_k}}}（千元）
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
-from finmind import fm_get
+import requests
 
 logger = logging.getLogger("totals")
 
 ROOT = Path(__file__).resolve().parent.parent
 TOTALS_PATH = ROOT / "data" / "totals.json"
 
-FOREIGN = {"Foreign_Investor", "Foreign_Dealer_Self"}
-TRUST = {"Investment_Trust"}
-DEALER = {"Dealer_self", "Dealer_Hedging"}
+TWSE_BFI = "https://www.twse.com.tw/rwd/zh/fund/BFI82U"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+FOREIGN_ROWS = {"外資及陸資(不含外資自營商)", "外資自營商"}
+TRUST_ROWS = {"投信"}
+DEALER_ROWS = {"自營商(自行買賣)", "自營商(避險)"}
 
 
-def fetch_total(d: str) -> dict | None:
-    """單日市場三大法人買/賣/淨（千元）。"""
-    df = fm_get("TaiwanStockTotalInstitutionalInvestors", start_date=d, end_date=d)
-    if df is None or df.empty:
+def fetch_total(d: str, retries: int = 3) -> dict | None:
+    """抓 TWSE BFI82U 單日三大法人買/賣/淨（千元）。非交易日/查無 → None。
+
+    TWSE 偶爾在正常交易日回傳莫名的 stat（如「查詢日期大於可查詢最大日期」），
+    屬暫時性節流，重試數次即可。
+    """
+    j = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(TWSE_BFI, params={"dayDate": d.replace("-", ""), "type": "day", "response": "json"},
+                             headers=HEADERS, timeout=20)
+            j = r.json()
+        except Exception as e:
+            logger.warning(f"[BFI82U] {d} 抓取失敗 (attempt {attempt + 1})：{e}")
+            j = None
+        if j and j.get("stat") == "OK" and j.get("data"):
+            break
+        time.sleep(2.0)
+    if not j or j.get("stat") != "OK" or not j.get("data"):
         return None
-    df = df.copy()
-    df["buy_k"] = df["buy"].astype(float) / 1000.0
-    df["sell_k"] = df["sell"].astype(float) / 1000.0
-    pick = lambda names, col: round(float(df[df["name"].isin(names)][col].sum()))  # noqa: E731
+
+    num = lambda s: float(str(s).replace(",", ""))  # noqa: E731
+    agg = {"f": [0.0, 0.0], "t": [0.0, 0.0], "d": [0.0, 0.0]}
+    matched = set()
+    for row in j["data"]:
+        name, buy, sell = row[0], row[1], row[2]
+        for tag, names in (("f", FOREIGN_ROWS), ("t", TRUST_ROWS), ("d", DEALER_ROWS)):
+            if name in names:
+                agg[tag][0] += num(buy)
+                agg[tag][1] += num(sell)
+                matched.add(name)
+    # 結構檢查：投信與外資列必須出現，否則視為異常
+    if "投信" not in matched or not (FOREIGN_ROWS & matched):
+        logger.warning(f"[BFI82U] {d} 欄位結構異常，matched={matched}")
+        return None
+
     out = {}
-    for tag, names in (("f", FOREIGN), ("t", TRUST), ("d", DEALER)):
-        b, s = pick(names, "buy_k"), pick(names, "sell_k")
-        out[f"{tag}_buy_k"], out[f"{tag}_sell_k"], out[f"{tag}_net_k"] = b, s, b - s
+    for tag in ("f", "t", "d"):
+        b, s = agg[tag]
+        out[f"{tag}_buy_k"] = round(b / 1000)
+        out[f"{tag}_sell_k"] = round(s / 1000)
+        out[f"{tag}_net_k"] = round((b - s) / 1000)
     return out
 
 

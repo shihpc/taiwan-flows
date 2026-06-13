@@ -149,9 +149,9 @@
   <div class="tabs" id="tabs">
     <div class="tab" data-tab="foreign">外資進出</div>
     <div class="tab" data-tab="trust">投信進出</div>
-    <div class="tab" data-tab="sync">同步買賣超</div>
+    <div class="tab" data-tab="sync">外資投信同步</div>
     <div class="tab" data-tab="oppose">外資投信對作</div>
-    <div class="tab" data-tab="etf">ETF</div>
+    <div class="tab" data-tab="etf">ETF市值</div>
   </div>
 </header>
 
@@ -183,7 +183,7 @@ const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
   totals:null, totSel:{period:"day",key:null}, futCmp:"prev1",
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
-        sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap"} } };
+        sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap",type:"stock"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
 const fmtDate = x=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
 const parseDate = s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);};
@@ -349,9 +349,14 @@ function renderEtf(page){
     <div class="line"><span>自營淨</span><span>${sign(g.d_amt_k,fmtYi(g.d_amt_k))}</span></div>
     <div class="line"><span>其他淨</span><span>${sign(g.other_amt_k,fmtYi(g.other_amt_k))}</span></div></div>`;
   let html=`<div class="stats">${card("整體",page.stats.all)}${card("股票型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
-  html+=`<div class="toggles"><div class="seg" data-seg="rank">
-    <button data-v="mktcap" class="${s.rank==="mktcap"?"active":""}">市值排行</button>
-    <button data-v="turnover" class="${s.rank==="turnover"?"active":""}">成交金額排行</button></div></div>`;
+  html+=`<div class="toggles">
+    <div class="seg" data-seg="rank">
+      <button data-v="mktcap" class="${s.rank==="mktcap"?"active":""}">市值排行</button>
+      <button data-v="turnover" class="${s.rank==="turnover"?"active":""}">成交金額排行</button></div>
+    <div class="seg" data-seg="etftype">
+      <button data-v="stock" class="${s.type==="stock"?"active":""}">股票型</button>
+      <button data-v="bond" class="${s.type==="bond"?"active":""}">債券型</button></div>
+  </div>`;
   const turnoverCols=[COL_CODE,COL_NAME,
     {h:"成交金額",f:r=>fmtYi(r.turnover_k)},
     {h:"外資淨",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
@@ -366,10 +371,9 @@ function renderEtf(page){
     {h:"其他",f:r=>fmtYi(r.other_value_k)},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   const cols = s.rank==="turnover"?turnoverCols:mktcapCols;
-  const stockRows = s.rank==="turnover"?page.turnover_stock:page.mktcap_stock;
-  const bondRows  = s.rank==="turnover"?page.turnover_bond:page.mktcap_bond;
-  html+=`<div class="sub">股票型 ETF（非 B 結尾）</div>${table(cols,stockRows)}`;
-  html+=`<div class="sub">債券型 ETF（B 結尾）</div>${table(cols,bondRows)}`;
+  const key = (s.rank==="turnover"?"turnover_":"mktcap_") + (s.type==="bond"?"bond":"stock");
+  const label = s.type==="bond" ? "債券型 ETF（B 結尾）" : "股票型 ETF（非 B 結尾）";
+  html+=`<div class="sub">${label}</div>${table(cols,page[key])}`;
   return html;
 }
 
@@ -506,7 +510,7 @@ function bindSegs(){
   document.querySelectorAll(".seg[data-seg]").forEach(seg=>{
     seg.querySelectorAll("button").forEach(b=>b.onclick=()=>{
       const which=seg.dataset.seg, v=b.dataset.v;
-      if(state.tab==="etf") state.sub.etf.rank=v;
+      if(state.tab==="etf"){ if(which==="etftype") state.sub.etf.type=v; else state.sub.etf.rank=v; }
       else if(state.tab==="sync") state.sub.sync.side=v;
       else if(state.tab==="oppose") state.sub.oppose.side=v;
       else state.sub[state.tab][which==="side"?"side":"rank"]=v;
