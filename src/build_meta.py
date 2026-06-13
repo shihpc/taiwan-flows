@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sys
 from datetime import datetime, timezone, timedelta
@@ -51,7 +52,7 @@ def _load_baseline_lookup() -> dict[str, float]:
     for row in raw["data"]:
         code = str(row["code"]).strip()
         lots = row.get("issued_lots")
-        if lots is None:
+        if lots is None or (isinstance(lots, float) and math.isnan(lots)):
             continue
         lookup[code] = float(lots)
         stripped = code.lstrip("0") or "0"
@@ -106,7 +107,9 @@ def build_meta() -> dict:
         "count": len(stocks),
         "etf_count": n_etf,
         "stocks": stocks,
-        "calendar": [],  # pipeline 逐日 append 交易日（YYYY-MM-DD）
+        # 保留既有 calendar（pipeline 逐日 append），重建 meta 不該清掉歷史交易日
+        "calendar": json.loads(META_OUT.read_text(encoding="utf-8")).get("calendar", [])
+        if META_OUT.exists() else [],
     }
 
 

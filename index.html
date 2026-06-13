@@ -84,6 +84,21 @@
   .modal th,.modal td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:normal}
   .modal th{background:transparent;position:static;color:var(--dim)}
   .modal .note{color:var(--dim);font-size:11px;margin-top:10px;border-left:2px solid var(--accent2);padding-left:8px}
+  /* custom range picker */
+  .picker{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px;
+    display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .picker label{color:var(--dim);font-size:12px;display:flex;gap:6px;align-items:center}
+  .picker input[type=date]{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;font-family:inherit;color-scheme:dark}
+  .picker button{background:var(--accent);color:#001318;border:0;border-radius:6px;padding:6px 16px;
+    font-family:inherit;font-weight:700;cursor:pointer}
+  .prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden;width:100%;margin-top:4px}
+  .prog>i{display:block;height:100%;background:var(--accent);width:0;transition:width .15s}
+  .rbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel2);
+    border:1px solid var(--accent2);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px}
+  .rbanner b{color:var(--accent)}
+  .rbanner button{margin-left:auto;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);
+    border-radius:6px;padding:4px 12px;font-family:inherit;cursor:pointer}
   .loading{color:var(--dim);padding:30px;text-align:center}
   .twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   @media(max-width:560px){.twocol{grid-template-columns:1fr}.stats{grid-template-columns:1fr}}
@@ -110,6 +125,7 @@
     <div class="mode" data-mode="r10">10日</div>
     <div class="mode" data-mode="r20">20日</div>
     <div class="mode" data-mode="r65">65日</div>
+    <div class="mode" data-mode="custom">自訂區間</div>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
   </div>
 </header>
@@ -138,9 +154,11 @@
 <footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例）</footer>
 
 <script>
-const state = { tab:"foreign", mode:"1d", latest:null, ranges:null,
+const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
+  customPages:null, customMeta:null, dailyCache:{},
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
         sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"turnover"} } };
+const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
 
 // ---------- formatters ----------
 // 億值格式：<10億顯示2位小數（小額保精度），其餘整數加千分位
@@ -175,6 +193,7 @@ async function ensureRanges(){
 }
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
+  if(state.mode==="custom") return state.customPages;
   return state.ranges.windows[state.mode].pages;
 }
 
@@ -301,15 +320,24 @@ function renderEtf(page){
 function render(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
+  if(state.mode==="custom" && !state.customPages){ renderPicker(); return; }
   const pages = currentPages();
   const main = document.getElementById("main");
   let html="";
-  if(state.tab==="foreign") html=renderInst(pages.foreign,"foreign");
-  else if(state.tab==="trust") html=renderInst(pages.trust,"trust");
-  else if(state.tab==="sync") html=renderSync(pages.sync);
-  else if(state.tab==="oppose") html=renderOppose(pages.oppose);
-  else if(state.tab==="etf") html=renderEtf(pages.etf);
+  if(state.mode==="custom" && state.customMeta){
+    const cm=state.customMeta;
+    html+=`<div class="rbanner">自訂區間 <b>${cm.d1} ~ ${cm.d2}</b>（${cm.n} 交易日）`
+      +(cm.truncated?` <span class="muted">已截斷為最近 65 日</span>`:``)
+      +`<button id="rRepick">重選區間</button></div>`;
+  }
+  if(state.tab==="foreign") html+=renderInst(pages.foreign,"foreign");
+  else if(state.tab==="trust") html+=renderInst(pages.trust,"trust");
+  else if(state.tab==="sync") html+=renderSync(pages.sync);
+  else if(state.tab==="oppose") html+=renderOppose(pages.oppose);
+  else if(state.tab==="etf") html+=renderEtf(pages.etf);
   main.innerHTML = html;
+  const rp=document.getElementById("rRepick");
+  if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
   bindSegs();
 }
 function bindSegs(){
@@ -329,12 +357,164 @@ function bindSegs(){
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{ state.tab=t.dataset.tab; render(); });
 document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
   state.mode=m.dataset.mode;
+  if(state.mode==="custom"){
+    document.getElementById("main").innerHTML='<div class="loading">載入交易日曆…</div>';
+    await loadMeta();
+    render();  // shows picker if no customPages yet
+    return;
+  }
   if(state.mode!=="1d"){
     document.getElementById("main").innerHTML='<div class="loading">載入區間…</div>';
     await ensureRanges();
   }
   render();
 });
+// ================= custom range (browser-side aggregation, mirrors budget.py) =================
+async function loadMeta(){ if(!state.meta) state.meta = await (await fetch("data/meta.json",{cache:"no-cache"})).json(); return state.meta; }
+
+async function fetchDaily(date){
+  if(state.dailyCache[date]) return state.dailyCache[date];
+  const ss=sessionStorage.getItem("d:"+date);
+  if(ss){ const m=JSON.parse(ss); state.dailyCache[date]=m; return m; }
+  const doc=await (await fetch(`data/daily/${date.replaceAll("-","")}.json`)).json();
+  const map={};
+  for(const r of doc.rows){ const o={}; doc.cols.forEach((c,i)=>o[c]=r[i]); map[r[0]]=o; }
+  state.dailyCache[date]=map;
+  try{ sessionStorage.setItem("d:"+date, JSON.stringify(map)); }catch(e){}
+  return map;
+}
+async function fetchTxOI(date){
+  try{
+    const doc=await (await fetch(`data/futures/${date.replaceAll("-","")}.json`)).json();
+    const ix=Object.fromEntries(doc.cols.map((c,i)=>[c,i]));
+    for(const r of doc.rows){ if(r[ix.futures_id]==="TX" && r[ix.institutional_investors]==="外資"){
+      return {lots:r[ix.long_open_interest_balance_volume]-r[ix.short_open_interest_balance_volume],
+              amt:Math.round((r[ix.long_open_interest_balance_amount]-r[ix.short_open_interest_balance_amount])/1000)};}}
+  }catch(e){}
+  return null;
+}
+function aggregateRange(rangeDates, docs, meta, prevDate, ma20dates){
+  const d2=rangeDates[rangeDates.length-1], stocks=meta.stocks, agg={};
+  for(const code in stocks){
+    const end=docs[d2][code];
+    if(!end || end.close==null) continue;
+    const s={t_net:0,t_amt:0,f_net:0,f_amt:0,d_net:0,d_amt:0,vol:0,amt:0};
+    for(const d of rangeDates){ const row=docs[d][code]; if(!row) continue;
+      for(const k in s){ const v=row[k]; if(v!=null) s[k]+=v; } }
+    const c2=end.close;
+    let base=null;
+    if(prevDate && docs[prevDate] && docs[prevDate][code] && docs[prevDate][code].close!=null) base=docs[prevDate][code].close;
+    else if(docs[rangeDates[0]][code] && docs[rangeDates[0]][code].close!=null) base=docs[rangeDates[0]][code].close;
+    const chg= base? round(c2/base*100-100,2):0;
+    let cs=[]; for(const d of ma20dates){ const row=docs[d]&&docs[d][code]; if(row&&row.close!=null) cs.push(row.close); }
+    cs=cs.slice(-20);
+    const bias= cs.length? round(c2/(cs.reduce((a,b)=>a+b,0)/cs.length)*100-100,2):null;
+    const info=stocks[code];
+    let issued=info.issued_lots; if(issued!=null && (typeof issued!=="number"||isNaN(issued))) issued=null;
+    agg[code]={code,name:info.name,is_etf:info.is_etf,industry:info.industry,issued_lots:issued,
+      close:round(c2,2),chg_pct:chg,bias20:bias,vol:Math.round(s.vol),amt:Math.round(s.amt),
+      t_net:round(s.t_net,1),t_amt:Math.round(s.t_amt),f_net:round(s.f_net,1),f_amt:Math.round(s.f_amt),
+      d_net:round(s.d_net,1),d_amt:Math.round(s.d_amt),t_inv:end.t_inv,f_shares:end.f_shares,f_pct:end.f_pct};
+  }
+  return agg;
+}
+const jr=(num,den)=>den?round(num/den*100,2):null;
+function jInstRow(a,side){
+  const net=a[side+"_net"],amt=a[side+"_amt"],issued=a.issued_lots;
+  let hold,hpct;
+  if(side==="t"){ hold=a.t_inv; hpct=(hold!=null&&issued)?jr(hold,issued):null; }
+  else { hold=a.f_shares; hpct=a.f_pct; }
+  return {code:a.code,name:a.name,net_amt_k:amt,net_lots:net,chg_hold_pct:issued?jr(net,issued):null,
+    hold_pct:hpct,hold_lots:hold,hold_value_m:hold!=null?Math.round(hold*a.close/1000):null,
+    vol_ratio:jr(net,a.vol),chg_pct:a.chg_pct,bias20:a.bias20};
+}
+function jPageInst(agg,side){
+  const rows=Object.values(agg).filter(a=>a[side+"_net"]!==0);
+  const buy=rows.filter(r=>r[side+"_net"]>0), sell=rows.filter(r=>r[side+"_net"]<0);
+  const A=lst=>lst.filter(r=>r.issued_lots).sort((x,y)=>Math.abs(y[side+"_net"])/y.issued_lots-Math.abs(x[side+"_net"])/x.issued_lots).slice(0,30).map(a=>jInstRow(a,side));
+  const B=lst=>[...lst].sort((x,y)=>Math.abs(y[side+"_amt"])-Math.abs(x[side+"_amt"])).slice(0,30).map(a=>jInstRow(a,side));
+  return {buy_by_chg:A(buy),buy_by_amt:B(buy),sell_by_chg:A(sell),sell_by_amt:B(sell)};
+}
+function jPageEtf(agg){
+  const etfs=Object.values(agg).filter(a=>a.is_etf);
+  const isBond=a=>a.name.includes("債"), mc=a=>a.issued_lots?Math.round(a.issued_lots*a.close):0;
+  const stats=g=>({count:g.length,mktcap_k:g.reduce((s,a)=>s+mc(a),0),turnover_k:g.reduce((s,a)=>s+a.amt,0),
+    f_amt_k:g.reduce((s,a)=>s+a.f_amt,0),t_amt_k:g.reduce((s,a)=>s+a.t_amt,0),d_amt_k:g.reduce((s,a)=>s+a.d_amt,0),
+    other_amt_k:-g.reduce((s,a)=>s+a.f_amt+a.t_amt+a.d_amt,0)});
+  const bond=etfs.filter(isBond), nonbond=etfs.filter(a=>!isBond(a));
+  const tRow=a=>({code:a.code,name:a.name,turnover_k:a.amt,f_amt_k:a.f_amt,t_amt_k:a.t_amt,d_amt_k:a.d_amt,other_amt_k:-(a.f_amt+a.t_amt+a.d_amt),chg_pct:a.chg_pct});
+  const mRow=a=>{const m=mc(a),fv=a.f_shares!=null?Math.round(a.f_shares*a.close):0,tv=a.t_inv!=null?Math.round(a.t_inv*a.close):0;
+    return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,chg_pct:a.chg_pct};};
+  return {stats:{all:stats(etfs),nonbond:stats(nonbond),bond:stats(bond)},
+    by_turnover:[...etfs].sort((x,y)=>y.amt-x.amt).slice(0,20).map(tRow),
+    by_mktcap:[...etfs].sort((x,y)=>mc(y)-mc(x)).slice(0,20).map(mRow)};
+}
+function jPageSync(agg){
+  const rows=Object.values(agg);
+  const row=a=>({code:a.code,name:a.name,t_amt_k:a.t_amt,t_net:a.t_net,f_amt_k:a.f_amt,f_net:a.f_net,
+    sum_amt_k:a.t_amt+a.f_amt,sum_net:round(a.t_net+a.f_net,1),strength_k:Math.min(Math.abs(a.t_amt),Math.abs(a.f_amt)),chg_pct:a.chg_pct});
+  const sb=rows.filter(a=>a.t_net>0&&a.f_net>0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30);
+  const ss=rows.filter(a=>a.t_net<0&&a.f_net<0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30);
+  const vs=side=>rows.filter(a=>a.vol&&a[side+"_net"]!==0).sort((x,y)=>Math.abs(y[side+"_net"])/y.vol-Math.abs(x[side+"_net"])/x.vol).slice(0,10).map(a=>({code:a.code,name:a.name,share_pct:round(Math.abs(a[side+"_net"])/a.vol*100,2),net_lots:a[side+"_net"],chg_pct:a.chg_pct}));
+  return {sync_buy:sb,sync_sell:ss,trust_vol_share:vs("t"),foreign_vol_share:vs("f")};
+}
+function jPageOppose(agg){
+  const rows=Object.values(agg);
+  const row=a=>({code:a.code,name:a.name,t_amt_k:a.t_amt,t_net:a.t_net,f_amt_k:a.f_amt,f_net:a.f_net,
+    strength_k:Math.min(Math.abs(a.t_amt),Math.abs(a.f_amt)),chg_pct:a.chg_pct});
+  return {f_buy_t_sell:rows.filter(a=>a.f_net>0&&a.t_net<0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30),
+          f_sell_t_buy:rows.filter(a=>a.f_net<0&&a.t_net>0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30)};
+}
+function renderPicker(){
+  const cal=state.meta.calendar;
+  const lo=cal[0], hi=cal[cal.length-1];
+  const def1=cal[Math.max(0,cal.length-20)];
+  document.getElementById("main").innerHTML=`<div class="picker">
+    <div>自訂區間 <span class="muted">（上限 65 交易日，資料 ${lo} ~ ${hi}）</span></div>
+    <label>起 <input type="date" id="cStart" min="${lo}" max="${hi}" value="${def1}"></label>
+    <label>迄 <input type="date" id="cEnd" min="${lo}" max="${hi}" value="${hi}"></label>
+    <button id="cGo">查詢</button>
+    <div id="cMsg" class="muted" style="flex-basis:100%"></div>
+    <div class="prog" style="display:none" id="cProgWrap"><i id="cProg"></i></div>
+  </div>`;
+  document.getElementById("cGo").onclick=()=>runCustomRange(document.getElementById("cStart").value,document.getElementById("cEnd").value);
+}
+function setProg(i,n){
+  const w=document.getElementById("cProgWrap"), b=document.getElementById("cProg"), m=document.getElementById("cMsg");
+  if(w){ w.style.display="block"; b.style.width=Math.round(i/n*100)+"%"; }
+  if(m) m.textContent=`載入交易日 ${i}/${n} …`;
+}
+async function runCustomRange(startStr,endStr){
+  await loadMeta();
+  const cal=state.meta.calendar;
+  if(!startStr||!endStr||startStr>endStr){ document.getElementById("cMsg").textContent="請選擇有效的起迄日"; return; }
+  let inRange=cal.filter(d=>d>=startStr&&d<=endStr);
+  if(inRange.length===0){ document.getElementById("cMsg").textContent="區間內無交易日資料"; return; }
+  let truncated=false;
+  if(inRange.length>65){ inRange=inRange.slice(-65); truncated=true; }
+  const d1=inRange[0], d2=inRange[inRange.length-1];
+  const i1=cal.indexOf(d1), i2=cal.indexOf(d2);
+  const prevDate=i1>0?cal[i1-1]:null;
+  const ma20dates=cal.slice(Math.max(0,i2-19),i2+1);
+  const need=[...new Set([...inRange, ...(prevDate?[prevDate]:[]), ...ma20dates])].sort();
+  const docs={};
+  for(let i=0;i<need.length;i++){ setProg(i,need.length); docs[need[i]]=await fetchDaily(need[i]); }
+  setProg(need.length,need.length);
+  const agg=aggregateRange(inRange,docs,state.meta,prevDate,ma20dates);
+  const futures=await fetchTxOI(d2).then(cur=>{
+    if(!cur) return null;
+    const earlier=cal.filter(d=>d.slice(0,7)<d2.slice(0,7));
+    const pme=earlier.length?earlier[earlier.length-1]:null;
+    const card={date:d2,oi_net_lots:cur.lots,oi_net_amount_k:cur.amt};
+    return (pme?fetchTxOI(pme):Promise.resolve(null)).then(prev=>{
+      if(prev){ card.vs_prev_month_lots=cur.lots-prev.lots; card.prev_month_end=pme; } return card; });
+  });
+  state.customPages={etf:jPageEtf(agg),trust:jPageInst(agg,"t"),
+    foreign:{...jPageInst(agg,"f"),futures_card:futures},sync:jPageSync(agg),oppose:jPageOppose(agg)};
+  state.customMeta={d1,d2,n:inRange.length,truncated};
+  render();
+}
+
 // ---------- info overlay ----------
 const overlay = document.getElementById("overlay");
 document.getElementById("infoBtn").onclick = ()=>overlay.classList.add("show");
