@@ -104,7 +104,16 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - **Part 2 ✓**：ETF 兩個排行都加 外資/投信/自營佔比＝(買張+賣張)/(2×成交張)；成交金額排行另加 外資買/賣、投信買/賣、自營買/賖（金額）。`budget.py aggregate` 加 f/t/d buy/sell（張）+ 買賣金額（Σ逐日張×當日close，千元）；`page_etf` 加 `share()` + buy/sell；前端 `aggregateRange`/`jPageEtf`/`renderEtf` 同步。
 - **Part 4 ✓**：Excel 工作表欄位——外資/投信進出 +持股張/持股市值；外資投信同步 −加總 +投信金額/張+外資金額/張；對作 `OPP_MINI=SYNC_MINI`；ETF市值 −漲跌 +佔比3；大盤三大法人 +外資佔比+買賣分欄；台指期 −金額 +未平倉部位市值。寬表改 A3 橫向、右表起始欄 `RS(cols)=cols.length+2` 動態避重疊。
 - **Part 5 ✓**：Excel「ETF市值」與「大盤資金」合併成單一工作表「ETF與大盤」。
-- 台指期「未平倉部位市值」＝**名目市值＝口數×加權指數×200**（使用者選定）。TAIEX 加權指數由 FMTQIK 一併存進 `totals.json` rows[d].taiex（`fetch_fmtqik_month`）；buildExcel 台指期 `mktval=lots*taiex*200/1e8`（億）。6/12：-65,039 口 → -5,745 億。前端 futbar 卡仍維持「金額淨額」不變（本次只改 Excel）。
+- 台指期「未平倉部位市值」＝**名目市值＝口數×加權指數×200**（使用者選定）。TAIEX 加權指數由 FMTQIK 一併存進 `totals.json` rows[d].taiex（`fetch_fmtqik_month`）；`mktval=lots*taiex*200/1e8`（億）。6/12：-65,039 口 → -5,745 億。
+
+### 後續微調（2026-06-14 第二批）
+1. 三大法人卡標籤「佔成交」→「外資佔比」。
+2. futbar 卡「金額淨額」→「未平倉市值」＝名目市值（lots×taiex×200/1e8）；前端與 Excel 一致。
+3. **⚠ 未做**：ETF市值排行加「自營持股市值」——**無自營庫存資料源**（baseline 只有 trust_inv；外資靠 Shareholding、投信靠 baseline 累計，自營兩者皆無）。需接自營庫存來源才能算絕對持股市值。
+4. 外資買賣超 tab 比照其他 tab 顯示 futbar（`render()` foreignflows 分支改呼叫 `updateFutbar()`）。
+5. 外資買賣超 tab/Excel 版面：近期區塊（上週/本週/近5日**每日5列**）置頂 → 年度累計（改名、新到舊、前端 `state.ffOpen` +/− 摺疊、Excel 月份預設展開）。
+6. Excel 全部工作表改 **A4 直向**、`fitToWidth=1`、窄邊界；原並排買賣表改**直向堆疊**（最寬 ≤11 欄，避免橫向溢出/過度縮放）。
+7. ETF與大盤工作表 A4 直向、表格改直向堆疊（ETF股票/債券/三大法人/台指期 依序）。
 
 ## 待辦 / 已知限制
 
