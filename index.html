@@ -861,11 +861,11 @@ async function runCustomRange(startStr,endStr,kind="custom"){
 // ================= Excel 匯出（列印導向：直向 A4、字 10、每表 Top10、每張單頁）=================
 // 固定匯出「最近資料日」，每機構一張，含 單日/本週/上週/本月/上月 五期間。
 const mT=(h,k)=>({h,v:r=>r[k]==null?"":r[k],w:h==="名稱"?13:7,left:true});
-const mA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:11});   // 千元→億
-const mAm=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:11});   // 百萬→億
-const mL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:10});             // 張
-const mP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.00"%"',w:8});            // 漲跌%
-const mS=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:8});             // 佔比%
+const mA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:13});   // 千元→億
+const mAm=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:13});   // 百萬→億
+const mL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:11});             // 張
+const mP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:7});             // 漲跌% 一位小數
+const mS=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:7});             // 佔比%
 const INST_MINI=[mT("代號","code"),mT("名稱","name"),mA("買賣超","net_amt_k"),mL("張數","net_lots"),
   mL("持股張","hold_lots"),mAm("持股市值","hold_value_m"),mP("漲跌","chg_pct")];
 const SYNC_MINI=[mT("代號","code"),mT("名稱","name"),mA("投信金額","t_amt_k"),mL("投信張","t_net"),
@@ -940,7 +940,7 @@ async function buildExcel(){
         const b=xlTable(ws,row,RS(INST_MINI),"賣超",INST_MINI,p.pages[side].sell_by_amt.slice(0,10),W,8);
         row=Math.max(a,b)+1;
       }
-      xlApplyWidth(ws,W,0.72);
+      xlApplyWidth(ws,W); ws.getColumn(INST_MINI.length+1).width=1.5;  // 數字欄足寬避免#####、間隔欄壓窄
     }
     instSheet("外資進出","foreign");
     instSheet("投信進出","trust");
@@ -952,7 +952,7 @@ async function buildExcel(){
         const a=xlTable(ws,row,1,"同步買",SYNC_MINI,p.pages.sync.sync_buy.slice(0,10),W,8);
         const b=xlTable(ws,row,RS(SYNC_MINI),"同步賣",SYNC_MINI,p.pages.sync.sync_sell.slice(0,10),W,8);
         row=Math.max(a,b)+1; }
-      xlApplyWidth(ws,W,0.72); }
+      xlApplyWidth(ws,W); ws.getColumn(SYNC_MINI.length+1).width=1.5; }
     // 外資投信對作（欄位同同步，並排，擠進一張直式 A4）
     { const ws=xlSheet(wb,"外資投信對作",true), W={}; head(ws,"外資投信對作　最近資料 "+d2); let row=3;
       for(const p of P){ if(!p.pages)continue;
@@ -960,7 +960,7 @@ async function buildExcel(){
         const a=xlTable(ws,row,1,"外資買·投信賣",OPP_MINI,p.pages.oppose.f_buy_t_sell.slice(0,10),W,8);
         const b=xlTable(ws,row,RS(OPP_MINI),"外資賣·投信買",OPP_MINI,p.pages.oppose.f_sell_t_buy.slice(0,10),W,8);
         row=Math.max(a,b)+1; }
-      xlApplyWidth(ws,W,0.72); }
+      xlApplyWidth(ws,W); ws.getColumn(OPP_MINI.length+1).width=1.5; }
     // ETF與大盤（Part 5：ETF市值 + 大盤資金 整合同一張；直向堆疊）
     { const ws=xlSheet(wb,"ETF與大盤"), W={}; head(ws,"ETF與大盤　最近資料 "+d2); let row=3;
       const etf=P[0].pages.etf;
@@ -1018,7 +1018,7 @@ async function buildExcel(){
       for(const y of Object.keys(yrs).sort().reverse()){ const yms=yrs[y].sort().reverse();
         rows.push(flat(y+" 年度累計", ffSum(yms.map(ym=>months[ym]))));
         for(const ym of yms) rows.push(flat("　"+(ym===fh.latest_date.slice(0,7)?ym+"（截至"+fh.latest_date.slice(5).replace('-','/')+"）":ym), months[ym])); }
-      const A=(h,k)=>({h,v:r=>r[k],fmt:'#,##0.0"億"',w:11});
+      const A=(h,k)=>({h,v:r=>r[k],fmt:'#,##0.0"億"',w:13});
       const FF=[{h:"期間",v:r=>r.n,w:20,left:true},
         A("上市買","tb"),A("上市賣","ts"),A("上市淨","tn"),
         A("上櫃買","ob"),A("上櫃賣","os"),A("上櫃淨","on"),

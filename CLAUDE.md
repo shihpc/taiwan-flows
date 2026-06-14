@@ -121,6 +121,10 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 外資/投信進出、同步、對作四張：改回**左右並排（左5右5）**、`xlSheet(...,true)` fitToHeight=1 擠進一張直式 A4、`xlTable(...,fz=8)` 壓字、`xlApplyWidth(ws,W,0.72)` 壓欄。
 - **字型慣例**：`xlTable` 有數字格式（c.fmt）的儲存格用 **Arial**（FZN），其餘文字/表頭/標題用 **微軟正黑體**（FZH）；head/sub 也是微軟正黑體。
 
+### 第四批 Excel 微調
+- 漲跌幅欄位（mP）改一位小數 `0.0"%"`。
+- 四張並排表：**不再用欄寬 ×0.72 壓縮**（會把金額欄壓到比數字窄而出現 #####）；改為數字欄保持足寬（mA/mAm w13、mL w11、外資買賣超 local A w13），只把**間隔欄壓到 1.5** 省空間；整張仍靠 fitToWidth/Height=1 擠進一張 A4。
+
 ## 待辦 / 已知限制
 
 - 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
