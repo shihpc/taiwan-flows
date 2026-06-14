@@ -84,7 +84,11 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
         if end is None or end["close"] is None:
             continue
         sums = {"t_net": 0.0, "t_amt": 0.0, "f_net": 0.0, "f_amt": 0.0,
-                "d_net": 0.0, "d_amt": 0.0, "vol": 0.0, "amt": 0.0}
+                "d_net": 0.0, "d_amt": 0.0, "vol": 0.0, "amt": 0.0,
+                "f_buy": 0.0, "f_sell": 0.0, "t_buy": 0.0, "t_sell": 0.0, "d_buy": 0.0, "d_sell": 0.0}
+        # 買/賣金額（千元）＝Σ 逐日 買賣張 × 當日收盤（與 t_amt 同口徑，分母分子一致）
+        amt_acc = {"f_buy_amt": 0.0, "f_sell_amt": 0.0, "t_buy_amt": 0.0,
+                   "t_sell_amt": 0.0, "d_buy_amt": 0.0, "d_sell_amt": 0.0}
         for d in win:
             row = docs[d].get(code)
             if not row:
@@ -93,6 +97,13 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
                 v = row.get(k)
                 if v is not None:
                     sums[k] += v
+            cl = row.get("close")
+            if cl is not None:
+                for tag in ("f", "t", "d"):
+                    for sd in ("buy", "sell"):
+                        lots = row.get(f"{tag}_{sd}")
+                        if lots is not None:
+                            amt_acc[f"{tag}_{sd}_amt"] += lots * cl
 
         close2 = float(end["close"])
         # 漲跌%
@@ -118,6 +129,12 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
             "f_net": round(sums["f_net"], 1), "f_amt": round(sums["f_amt"]),
             "d_net": round(sums["d_net"], 1), "d_amt": round(sums["d_amt"]),
             "t_inv": end.get("t_inv"), "f_shares": end.get("f_shares"), "f_pct": end.get("f_pct"),
+            "f_buy": round(sums["f_buy"], 1), "f_sell": round(sums["f_sell"], 1),
+            "t_buy": round(sums["t_buy"], 1), "t_sell": round(sums["t_sell"], 1),
+            "d_buy": round(sums["d_buy"], 1), "d_sell": round(sums["d_sell"], 1),
+            "f_buy_amt": round(amt_acc["f_buy_amt"]), "f_sell_amt": round(amt_acc["f_sell_amt"]),
+            "t_buy_amt": round(amt_acc["t_buy_amt"]), "t_sell_amt": round(amt_acc["t_sell_amt"]),
+            "d_buy_amt": round(amt_acc["d_buy_amt"]), "d_sell_amt": round(amt_acc["d_sell_amt"]),
         }
     return agg
 
@@ -202,10 +219,21 @@ def page_etf(agg: dict) -> dict:
     bond = [a for a in etfs if is_bond(a)]
     nonbond = [a for a in etfs if not is_bond(a)]
 
+    def share(a, tag):  # 法人佔成交比重 = (買張+賣張)/(2×成交張)
+        v = a["vol"]
+        return round((a[f"{tag}_buy"] + a[f"{tag}_sell"]) / (2 * v) * 100, 2) if v else None
+
+    def shares(a):
+        return {"f_share": share(a, "f"), "t_share": share(a, "t"), "d_share": share(a, "d")}
+
     def turnover_row(a):
         return {"code": a["code"], "name": a["name"], "turnover_k": a["amt"],
                 "f_amt_k": a["f_amt"], "t_amt_k": a["t_amt"], "d_amt_k": a["d_amt"],
-                "other_amt_k": -(a["f_amt"] + a["t_amt"] + a["d_amt"]), "chg_pct": a["chg_pct"]}
+                "other_amt_k": -(a["f_amt"] + a["t_amt"] + a["d_amt"]),
+                "f_buy_k": a["f_buy_amt"], "f_sell_k": a["f_sell_amt"],
+                "t_buy_k": a["t_buy_amt"], "t_sell_k": a["t_sell_amt"],
+                "d_buy_k": a["d_buy_amt"], "d_sell_k": a["d_sell_amt"],
+                **shares(a), "chg_pct": a["chg_pct"]}
 
     def mktcap_row(a):
         mc = mktcap_k(a)
@@ -213,7 +241,8 @@ def page_etf(agg: dict) -> dict:
         t_val = round(a["t_inv"] * a["close"]) if a["t_inv"] is not None else 0
         return {"code": a["code"], "name": a["name"], "mktcap_k": mc,
                 "f_hold_value_k": f_val, "t_hold_value_k": t_val,
-                "other_value_k": mc - f_val - t_val, "chg_pct": a["chg_pct"]}
+                "other_value_k": mc - f_val - t_val,
+                **shares(a), "chg_pct": a["chg_pct"]}
 
     def top(lst, key):
         return sorted(lst, key=key, reverse=True)[:20]

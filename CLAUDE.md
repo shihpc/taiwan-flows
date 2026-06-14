@@ -98,13 +98,13 @@ index.html  .github/workflows/daily.yml  taiwan-flows-spec_V1.md
 
 daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct`（張/千元/%）。
 
-## 進行中需求（2026-06-14 大指令，Part 3 已完成，1/2/4/5 待續）
+## 2026-06-14 大指令（5 部分）— 全部完成
 
-使用者一次給 5 部分。**Part 3（外資買賣超 tab + Excel sheet）已完成並驗證**。其餘待做：
-- **Part 1**：三大法人卡加「外資佔比」＝(外資買金額+外資賣金額)/(2×市場成交金額)，XX.X%。需把**市場成交金額**加進 `totals.json`（`totals.py` 已有 `fetch_tse_turnover_month`(FMTQIK) + `fetch_otc_turnover`，**尚未寫入 totals.json schema**，要加欄＋回補 65 天＋前端 `renderTotCard` 顯示）。
-- **Part 2**：ETF tab「市值排行」「成交金額排行」都加 外資/投信/自營佔比三欄；成交金額排行佔比＝(該股買+賣金額)/(2×市場成交金額)，並加 外資買/賣、投信買/賣、自營買/賣 六欄（daily 已有 f/t/d buy/sell 分欄，`budget.py page_etf` + 前端 `renderEtf`/`jPageEtf` 要改）。
-- **Part 4**：Excel 各工作表欄位調整——外資/投信進出加持股張數+持股市值；外資投信同步拿掉加總、加投信金額/張+外資金額/張；對作對齊同步；ETF市值拿掉漲跌、加佔比三欄；大盤資金三大法人加佔比+買賣分欄、台指期拿掉金額改未平倉部位市值。
-- **Part 5**：把 Excel「ETF市值」與「大盤資金」兩張工作表整合成同一張。
+- **Part 1 ✓**：三大法人卡加「外資佔成交」＝(外資買+賣金額)/(2×市場成交金額)。`totals.json` 每個市場加 `turnover_k`（上市 FMTQIK、上櫃 tradingIndex 月查取當日，皆千元）；`totals.py --backfill-turnover` 回補、`update_total` 每日帶；前端 `computeTot` 加總 turnover、`renderTotCard` 外資列顯示佔比。（6/12 上市 35.3%）
+- **Part 2 ✓**：ETF 兩個排行都加 外資/投信/自營佔比＝(買張+賣張)/(2×成交張)；成交金額排行另加 外資買/賣、投信買/賣、自營買/賖（金額）。`budget.py aggregate` 加 f/t/d buy/sell（張）+ 買賣金額（Σ逐日張×當日close，千元）；`page_etf` 加 `share()` + buy/sell；前端 `aggregateRange`/`jPageEtf`/`renderEtf` 同步。
+- **Part 4 ✓**：Excel 工作表欄位——外資/投信進出 +持股張/持股市值；外資投信同步 −加總 +投信金額/張+外資金額/張；對作 `OPP_MINI=SYNC_MINI`；ETF市值 −漲跌 +佔比3；大盤三大法人 +外資佔比+買賣分欄；台指期 −金額 +未平倉部位市值。寬表改 A3 橫向、右表起始欄 `RS(cols)=cols.length+2` 動態避重疊。
+- **Part 5 ✓**：Excel「ETF市值」與「大盤資金」合併成單一工作表「ETF與大盤」。
+- 台指期「未平倉部位市值」＝**名目市值＝口數×加權指數×200**（使用者選定）。TAIEX 加權指數由 FMTQIK 一併存進 `totals.json` rows[d].taiex（`fetch_fmtqik_month`）；buildExcel 台指期 `mktval=lots*taiex*200/1e8`（億）。6/12：-65,039 口 → -5,745 億。前端 futbar 卡仍維持「金額淨額」不變（本次只改 Excel）。
 
 ## 待辦 / 已知限制
 

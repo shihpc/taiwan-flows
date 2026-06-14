@@ -241,6 +241,7 @@ const fmtYi = k => (k==null?"—":yiStr(k/1e5));    // 千元 → 億
 const fmtYiM = m => (m==null?"—":yiStr(m/100));   // 百萬 → 億
 const fmtLot = n => (n==null?"—":Math.round(n).toLocaleString("en-US"));
 const fmtPct = p => (p==null?"—":(p>0?"+":"")+p.toFixed(2)+"%");
+const fmtShare = s => (s==null?"—":s.toFixed(1)+"%");
 const sign = (v,txt) => `<span class="${v>0?'up':v<0?'down':'muted'}">${txt}</span>`;
 const chg = p => p==null?'<span class="muted">—</span>':`<span class="${p>0?'up':p<0?'down':'muted'}">${fmtPct(p)}</span>`;
 const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_blank" rel="noopener">${c}</a>`;
@@ -401,16 +402,19 @@ function renderEtf(page){
   </div>`;
   const turnoverCols=[COL_CODE,COL_NAME,
     {h:"成交金額",f:r=>fmtYi(r.turnover_k)},
-    {h:"外資淨",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},
-    {h:"投信淨",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},
-    {h:"自營淨",f:r=>sign(r.d_amt_k,fmtYi(r.d_amt_k))},
-    {h:"其他淨",f:r=>sign(r.other_amt_k,fmtYi(r.other_amt_k))},
+    {h:"外資買",f:r=>fmtYi(r.f_buy_k)},{h:"外資賣",f:r=>fmtYi(r.f_sell_k)},
+    {h:"外資淨",f:r=>sign(r.f_amt_k,fmtYi(r.f_amt_k))},{h:"外資佔比",f:r=>fmtShare(r.f_share)},
+    {h:"投信買",f:r=>fmtYi(r.t_buy_k)},{h:"投信賣",f:r=>fmtYi(r.t_sell_k)},
+    {h:"投信淨",f:r=>sign(r.t_amt_k,fmtYi(r.t_amt_k))},{h:"投信佔比",f:r=>fmtShare(r.t_share)},
+    {h:"自營買",f:r=>fmtYi(r.d_buy_k)},{h:"自營賣",f:r=>fmtYi(r.d_sell_k)},
+    {h:"自營淨",f:r=>sign(r.d_amt_k,fmtYi(r.d_amt_k))},{h:"自營佔比",f:r=>fmtShare(r.d_share)},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   const mktcapCols=[COL_CODE,COL_NAME,
     {h:"市值",f:r=>fmtYi(r.mktcap_k)},
     {h:"外資持股市值",f:r=>fmtYi(r.f_hold_value_k)},
     {h:"投信持股市值",f:r=>fmtYi(r.t_hold_value_k)},
     {h:"其他",f:r=>fmtYi(r.other_value_k)},
+    {h:"外資佔比",f:r=>fmtShare(r.f_share)},{h:"投信佔比",f:r=>fmtShare(r.t_share)},{h:"自營佔比",f:r=>fmtShare(r.d_share)},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   const cols = s.rank==="turnover"?turnoverCols:mktcapCols;
   const key = (s.rank==="turnover"?"turnover_":"mktcap_") + (s.type==="bond"?"bond":"stock");
@@ -513,11 +517,12 @@ function totGroups(period){
   return groups.reverse();  // 最新在前
 }
 function computeTot(dates, mkt){
-  const o={f_buy:0,f_sell:0,f_net:0,t_buy:0,t_sell:0,t_net:0,d_buy:0,d_sell:0,d_net:0};
+  const o={f_buy:0,f_sell:0,f_net:0,t_buy:0,t_sell:0,t_net:0,d_buy:0,d_sell:0,d_net:0,turnover:0};
   for(const dd of dates){ const r=state.totals.rows[dd]; if(!r) continue;
     const parts = mkt==="all" ? [r.tse,r.otc] : [r[mkt]];
     for(const p of parts){ if(!p) continue;
-      for(const k of ["f","t","d"]){ o[k+"_buy"]+=p[k+"_buy_k"]||0; o[k+"_sell"]+=p[k+"_sell_k"]||0; o[k+"_net"]+=p[k+"_net_k"]||0; } } }
+      for(const k of ["f","t","d"]){ o[k+"_buy"]+=p[k+"_buy_k"]||0; o[k+"_sell"]+=p[k+"_sell_k"]||0; o[k+"_net"]+=p[k+"_net_k"]||0; }
+      o.turnover+=p.turnover_k||0; } }
   return o;
 }
 function renderTotCard(){
@@ -530,16 +535,19 @@ function renderTotCard(){
   const btn=(p,l)=>`<button data-p="${p}" class="${period===p?"active":""}">${l}</button>`;
   const mbtn=(m,l)=>`<button data-m="${m}" class="${state.totMkt===m?"active":""}">${l}</button>`;
   const opts=groups.map(x=>`<option value="${x.key}" ${x.key===state.totSel.key?"selected":""}>${x.label}</option>`).join("");
-  const trow=(lbl,k)=>`<div class="totrow"><span class="k tlbl">${lbl}</span>`
+  const fShare = s.turnover ? (s.f_buy+s.f_sell)/(2*s.turnover)*100 : null;
+  const trow=(lbl,k,extra)=>`<div class="totrow"><span class="k tlbl">${lbl}</span>`
     +`<span class="k">買</span><span class="v">${fmtYi(s[k+"_buy"])}</span>`
     +`<span class="k">賣</span><span class="v">${fmtYi(s[k+"_sell"])}</span>`
-    +`<span class="k">淨</span><span class="v">${sign(s[k+"_net"],fmtYi(s[k+"_net"]))}</span></div>`;
+    +`<span class="k">淨</span><span class="v">${sign(s[k+"_net"],fmtYi(s[k+"_net"]))}</span>`
+    +(extra||"")+`</div>`;
+  const fExtra=`<span class="k">佔成交</span><span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span>`;
   el.innerHTML=`<div class="cardwrap">
     <div class="cardhead"><span class="ttl">三大法人買賣超</span>
       <div class="seg tmkt">${mbtn("tse","上市")}${mbtn("otc","上櫃")}${mbtn("all","合計")}</div>
       <div class="seg tsel">${btn("day","日")}${btn("week","週")}${btn("month","月")}</div>
       <select id="totSel">${opts}</select></div>
-    <div class="totgrid">${trow("外資","f")}${trow("投信","t")}${trow("自營","d")}</div>
+    <div class="totgrid">${trow("外資","f",fExtra)}${trow("投信","t")}${trow("自營","d")}</div>
   </div>`;
   el.querySelectorAll(".tmkt button").forEach(b=>b.onclick=()=>{ state.totMkt=b.dataset.m; renderTotCard(); });
   el.querySelectorAll(".tsel button").forEach(b=>b.onclick=()=>{ state.totSel.period=b.dataset.p; state.totSel.key=null; renderTotCard(); });
@@ -683,9 +691,13 @@ function aggregateRange(rangeDates, docs, meta, prevDate, ma20dates){
   for(const code in stocks){
     const end=docs[d2][code];
     if(!end || end.close==null) continue;
-    const s={t_net:0,t_amt:0,f_net:0,f_amt:0,d_net:0,d_amt:0,vol:0,amt:0};
+    const s={t_net:0,t_amt:0,f_net:0,f_amt:0,d_net:0,d_amt:0,vol:0,amt:0,
+      f_buy:0,f_sell:0,t_buy:0,t_sell:0,d_buy:0,d_sell:0};
+    const am={f_buy_amt:0,f_sell_amt:0,t_buy_amt:0,t_sell_amt:0,d_buy_amt:0,d_sell_amt:0};
     for(const d of rangeDates){ const row=docs[d][code]; if(!row) continue;
-      for(const k in s){ const v=row[k]; if(v!=null) s[k]+=v; } }
+      for(const k in s){ const v=row[k]; if(v!=null) s[k]+=v; }
+      const cl=row.close; if(cl!=null){ for(const tag of ["f","t","d"]) for(const sd of ["buy","sell"]){
+        const lots=row[tag+"_"+sd]; if(lots!=null) am[tag+"_"+sd+"_amt"]+=lots*cl; } } }
     const c2=end.close;
     let base=null;
     if(prevDate && docs[prevDate] && docs[prevDate][code] && docs[prevDate][code].close!=null) base=docs[prevDate][code].close;
@@ -699,7 +711,12 @@ function aggregateRange(rangeDates, docs, meta, prevDate, ma20dates){
     agg[code]={code,name:info.name,is_etf:info.is_etf,industry:info.industry,issued_lots:issued,
       close:round(c2,2),chg_pct:chg,bias20:bias,vol:Math.round(s.vol),amt:Math.round(s.amt),
       t_net:round(s.t_net,1),t_amt:Math.round(s.t_amt),f_net:round(s.f_net,1),f_amt:Math.round(s.f_amt),
-      d_net:round(s.d_net,1),d_amt:Math.round(s.d_amt),t_inv:end.t_inv,f_shares:end.f_shares,f_pct:end.f_pct};
+      d_net:round(s.d_net,1),d_amt:Math.round(s.d_amt),t_inv:end.t_inv,f_shares:end.f_shares,f_pct:end.f_pct,
+      f_buy:round(s.f_buy,1),f_sell:round(s.f_sell,1),t_buy:round(s.t_buy,1),t_sell:round(s.t_sell,1),
+      d_buy:round(s.d_buy,1),d_sell:round(s.d_sell,1),
+      f_buy_amt:Math.round(am.f_buy_amt),f_sell_amt:Math.round(am.f_sell_amt),
+      t_buy_amt:Math.round(am.t_buy_amt),t_sell_amt:Math.round(am.t_sell_amt),
+      d_buy_amt:Math.round(am.d_buy_amt),d_sell_amt:Math.round(am.d_sell_amt)};
   }
   return agg;
 }
@@ -728,9 +745,14 @@ function jPageEtf(agg){
     f_amt_k:g.reduce((s,a)=>s+a.f_amt,0),t_amt_k:g.reduce((s,a)=>s+a.t_amt,0),d_amt_k:g.reduce((s,a)=>s+a.d_amt,0),
     other_amt_k:-g.reduce((s,a)=>s+a.f_amt+a.t_amt+a.d_amt,0)});
   const bond=etfs.filter(isBond), nonbond=etfs.filter(a=>!isBond(a));
-  const tRow=a=>({code:a.code,name:a.name,turnover_k:a.amt,f_amt_k:a.f_amt,t_amt_k:a.t_amt,d_amt_k:a.d_amt,other_amt_k:-(a.f_amt+a.t_amt+a.d_amt),chg_pct:a.chg_pct});
+  const shr=(a,tag)=>a.vol?round((a[tag+"_buy"]+a[tag+"_sell"])/(2*a.vol)*100,2):null;
+  const shares=a=>({f_share:shr(a,"f"),t_share:shr(a,"t"),d_share:shr(a,"d")});
+  const tRow=a=>({code:a.code,name:a.name,turnover_k:a.amt,f_amt_k:a.f_amt,t_amt_k:a.t_amt,d_amt_k:a.d_amt,
+    other_amt_k:-(a.f_amt+a.t_amt+a.d_amt),
+    f_buy_k:a.f_buy_amt,f_sell_k:a.f_sell_amt,t_buy_k:a.t_buy_amt,t_sell_k:a.t_sell_amt,d_buy_k:a.d_buy_amt,d_sell_k:a.d_sell_amt,
+    ...shares(a),chg_pct:a.chg_pct});
   const mRow=a=>{const m=mc(a),fv=a.f_shares!=null?Math.round(a.f_shares*a.close):0,tv=a.t_inv!=null?Math.round(a.t_inv*a.close):0;
-    return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,chg_pct:a.chg_pct};};
+    return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,...shares(a),chg_pct:a.chg_pct};};
   const top=(lst,key)=>[...lst].sort((x,y)=>key(y)-key(x)).slice(0,20);
   return {stats:{all:stats(etfs),nonbond:stats(nonbond),bond:stats(bond)},
     turnover_stock:top(nonbond,a=>a.amt).map(tRow), turnover_bond:top(bond,a=>a.amt).map(tRow),
@@ -827,12 +849,17 @@ async function runCustomRange(startStr,endStr,kind="custom"){
 // 固定匯出「最近資料日」，每機構一張，含 單日/本週/上週/本月/上月 五期間。
 const mT=(h,k)=>({h,v:r=>r[k]==null?"":r[k],w:h==="名稱"?13:7,left:true});
 const mA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:11});   // 千元→億
+const mAm=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:11});   // 百萬→億
 const mL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:10});             // 張
-const mP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.00"%"',w:8});            // %
-const INST_MINI=[mT("代號","code"),mT("名稱","name"),mA("買賣超","net_amt_k"),mL("張數","net_lots"),mP("漲跌","chg_pct")];
-const SYNC_MINI=[mT("代號","code"),mT("名稱","name"),mA("加總","sum_amt_k"),mP("漲跌","chg_pct")];
-const OPP_MINI=[mT("代號","code"),mT("名稱","name"),mA("外資","f_amt_k"),mA("投信","t_amt_k")];
-const ETFV_MINI=[mT("代號","code"),mT("名稱","name"),mA("市值","mktcap_k"),mP("漲跌","chg_pct")];
+const mP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.00"%"',w:8});            // 漲跌%
+const mS=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:8});             // 佔比%
+const INST_MINI=[mT("代號","code"),mT("名稱","name"),mA("買賣超","net_amt_k"),mL("張數","net_lots"),
+  mL("持股張","hold_lots"),mAm("持股市值","hold_value_m"),mP("漲跌","chg_pct")];
+const SYNC_MINI=[mT("代號","code"),mT("名稱","name"),mA("投信金額","t_amt_k"),mL("投信張","t_net"),
+  mA("外資金額","f_amt_k"),mL("外資張","f_net"),mP("漲跌","chg_pct")];
+const OPP_MINI=SYNC_MINI;  // 對作工作表欄位與同步一致
+const ETFV_MINI=[mT("代號","code"),mT("名稱","name"),mA("市值","mktcap_k"),
+  mS("外資佔比","f_share"),mS("投信佔比","t_share"),mS("自營佔比","d_share")];
 
 const xlThin={style:"thin",color:{argb:"FFCCCCCC"}};
 const xlBorder={top:xlThin,left:xlThin,bottom:xlThin,right:xlThin};
@@ -887,12 +914,13 @@ async function buildExcel(){
     const plabel=p=>p.name+"（"+p.s+(p.s!==p.e?(" ~ "+p.e):"")+"）　左：買超　右：賣超";
 
     // 機構分頁：每期間 買/賣 Top10 並排（左買右賣）
+    const RS=cols=>cols.length+2;  // 右表起始欄（左表寬 + 1 欄間隔）
     function instSheet(name, side){
-      const ws=xlSheet(wb,name), W={}; head(ws,name+"　最近資料 "+d2); let row=3;
+      const ws=xlSheet(wb,name,{a3:true,land:true}), W={}; head(ws,name+"　最近資料 "+d2); let row=3;
       for(const p of P){ if(!p.pages) continue;
         row=sub(ws,row,plabel(p));
         const a=xlTable(ws,row,1,null,INST_MINI,p.pages[side].buy_by_amt.slice(0,10),W);
-        const b=xlTable(ws,row,8,null,INST_MINI,p.pages[side].sell_by_amt.slice(0,10),W);
+        const b=xlTable(ws,row,RS(INST_MINI),null,INST_MINI,p.pages[side].sell_by_amt.slice(0,10),W);
         row=Math.max(a,b)+1;
       }
       xlApplyWidth(ws,W);
@@ -901,42 +929,49 @@ async function buildExcel(){
     instSheet("投信進出","trust");
 
     // 同步買賣超
-    { const ws=xlSheet(wb,"外資投信同步"), W={}; head(ws,"外資投信同步　最近資料 "+d2); let row=3;
+    { const ws=xlSheet(wb,"外資投信同步",{a3:true,land:true}), W={}; head(ws,"外資投信同步　最近資料 "+d2); let row=3;
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,p.name+"（"+p.s+(p.s!==p.e?(" ~ "+p.e):"")+"）　左：同步買　右：同步賣");
         const a=xlTable(ws,row,1,null,SYNC_MINI,p.pages.sync.sync_buy.slice(0,10),W);
-        const b=xlTable(ws,row,7,null,SYNC_MINI,p.pages.sync.sync_sell.slice(0,10),W);
+        const b=xlTable(ws,row,RS(SYNC_MINI),null,SYNC_MINI,p.pages.sync.sync_sell.slice(0,10),W);
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); }
-    // 外資投信對作
-    { const ws=xlSheet(wb,"外資投信對作"), W={}; head(ws,"外資投信對作　最近資料 "+d2); let row=3;
+    // 外資投信對作（欄位同同步）
+    { const ws=xlSheet(wb,"外資投信對作",{a3:true,land:true}), W={}; head(ws,"外資投信對作　最近資料 "+d2); let row=3;
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,p.name+"（"+p.s+(p.s!==p.e?(" ~ "+p.e):"")+"）　左：外資買投信賣　右：外資賣投信買");
         const a=xlTable(ws,row,1,null,OPP_MINI,p.pages.oppose.f_buy_t_sell.slice(0,10),W);
-        const b=xlTable(ws,row,7,null,OPP_MINI,p.pages.oppose.f_sell_t_buy.slice(0,10),W);
+        const b=xlTable(ws,row,RS(OPP_MINI),null,OPP_MINI,p.pages.oppose.f_sell_t_buy.slice(0,10),W);
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); }
-    // ETF 市值（末日值，取最近日）
-    { const ws=xlSheet(wb,"ETF市值"), W={}; head(ws,"ETF 市值　最近資料 "+d2); let row=3;
+    // ETF與大盤（Part 5：ETF市值 + 大盤資金 整合同一張）
+    { const ws=xlSheet(wb,"ETF與大盤",{a3:true,land:true}), W={}; head(ws,"ETF與大盤　最近資料 "+d2); let row=3;
       const etf=P[0].pages.etf;
-      row=sub(ws,row,"左：股票型　右：債券/平衡型（依市值）");
-      xlTable(ws,row,1,null,ETFV_MINI,etf.mktcap_stock.slice(0,10),W);
-      xlTable(ws,row,6,null,ETFV_MINI,etf.mktcap_bond.slice(0,10),W);
-      xlApplyWidth(ws,W); }
-    // 大盤資金：三大法人(5期間,合計) + 台指期(4時點)
-    { const ws=xlSheet(wb,"大盤資金"), W={}; head(ws,"大盤資金　最近資料 "+d2); let row=3;
+      row=sub(ws,row,"ETF 市值（依市值，末日值）　左：股票型　右：債券/平衡型");
+      const ea=xlTable(ws,row,1,null,ETFV_MINI,etf.mktcap_stock.slice(0,10),W);
+      const eb=xlTable(ws,row,RS(ETFV_MINI),null,ETFV_MINI,etf.mktcap_bond.slice(0,10),W);
+      row=Math.max(ea,eb)+1;
       if(state.totals){
-        row=sub(ws,row,"三大法人買賣超　淨額（上市+上櫃合計）");
-        const TOT=[{h:"期間",v:r=>r.n,w:10,left:true},mA("外資淨","f"),mA("投信淨","t"),mA("自營淨","d")];
+        row=sub(ws,row,"三大法人買賣超（上市+上櫃合計）");
+        const TOT=[{h:"期間",v:r=>r.n,w:18,left:true},mS("外資佔比","fs"),
+          mA("外資買","fb"),mA("外資賣","fsl"),mA("外資淨","f"),
+          mA("投信買","tb"),mA("投信賣","tsl"),mA("投信淨","t"),
+          mA("自營買","db"),mA("自營賣","dsl"),mA("自營淨","d")];
         const rows=P.map(p=>{ const s=computeTot(state.meta.calendar.filter(d=>d>=p.s&&d<=p.e),"all");
-          return {n:p.name+"（"+p.s+(p.s!==p.e?("~"+p.e):"")+"）",f:s.f_net,t:s.t_net,d:s.d_net}; });
+          return {n:p.name+"（"+p.s+(p.s!==p.e?("~"+p.e):"")+"）",
+            fs:s.turnover?(s.f_buy+s.f_sell)/(2*s.turnover)*100:null,
+            fb:s.f_buy,fsl:s.f_sell,f:s.f_net,tb:s.t_buy,tsl:s.t_sell,t:s.t_net,db:s.d_buy,dsl:s.d_sell,d:s.d_net}; });
         row=xlTable(ws,row,1,null,TOT,rows,W)+1;
       }
-      row=sub(ws,row,"台指期 外資未平倉");
+      row=sub(ws,row,"台指期 外資未平倉（部位市值＝口數×加權指數×200）");
       const pts=[["單日",d2],["本週一",refDateFor("thisMon",d2)],["上週五",refDateFor("lastFri",d2)],["上月底",refDateFor("lastMonthEnd",d2)]];
       const futRows=[];
-      for(const [lbl,dt] of pts){ if(!dt) continue; const oi=await fetchTxOI(dt); if(oi) futRows.push({n:lbl+"　"+dt,lots:oi.lots,amt:oi.amt/1e5}); }
-      const FUT=[{h:"時點",v:r=>r.n,w:16,left:true},{h:"未平倉口數",v:r=>r.lots,fmt:'#,##0',w:12},{h:"金額",v:r=>r.amt,fmt:'#,##0.0"億"',w:11}];
+      for(const [lbl,dt] of pts){ if(!dt) continue; const oi=await fetchTxOI(dt); if(!oi) continue;
+        const tx=(state.totals&&state.totals.rows[dt])?state.totals.rows[dt].taiex:null;
+        const mktval=tx!=null?oi.lots*tx*200/1e8:null;  // 名目市值（元）→億
+        futRows.push({n:lbl+"　"+dt,lots:oi.lots,mktval}); }
+      const FUT=[{h:"時點",v:r=>r.n,w:16,left:true},{h:"未平倉口數",v:r=>r.lots,fmt:'#,##0',w:12},
+        {h:"未平倉部位市值",v:r=>r.mktval,fmt:'#,##0"億"',w:14}];
       xlTable(ws,row,1,null,FUT,futRows,W);
       xlApplyWidth(ws,W); }
     // 外資買賣超：市場別 年/月 歷史 + 近5日（官方 TWSE+TPEx，A3 橫向）
