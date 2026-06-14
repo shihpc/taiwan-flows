@@ -46,7 +46,8 @@ TPE = timezone(timedelta(hours=8))
 
 COLS = ["code", "close", "chg_pct", "vol", "amt",
         "t_net", "t_amt", "f_net", "f_amt", "d_net", "d_amt",
-        "t_inv", "f_shares", "f_pct"]
+        "t_inv", "f_shares", "f_pct",
+        "f_buy", "f_sell", "t_buy", "t_sell", "d_buy", "d_sell"]
 
 FOREIGN_NAMES = {"Foreign_Investor", "Foreign_Dealer_Self"}
 TRUST_NAMES = {"Investment_Trust"}
@@ -131,19 +132,26 @@ def fetch_day(d: str):
 # 組裝單日逐檔列
 # ════════════════════════════════════════════════════════════════
 
+_INST_ZERO = {"f_net": 0.0, "t_net": 0.0, "d_net": 0.0,
+              "f_buy": 0.0, "f_sell": 0.0, "t_buy": 0.0, "t_sell": 0.0, "d_buy": 0.0, "d_sell": 0.0}
+
+
 def _agg_institutional(inst: pd.DataFrame) -> dict[str, dict]:
-    """long → {code: {f_net, t_net, d_net}}（張）。buy/sell 單位為股 → /1000。"""
+    """long → {code: {f/t/d _net/_buy/_sell}}（張）。buy/sell 單位為股 → /1000。"""
     out: dict[str, dict] = {}
     if inst.empty:
         return out
     inst = inst.copy()
     inst["stock_id"] = inst["stock_id"].astype(str)
-    inst["net"] = (pd.to_numeric(inst["buy"], errors="coerce").fillna(0)
-                   - pd.to_numeric(inst["sell"], errors="coerce").fillna(0)) / 1000.0
-    for name_set, key in [(FOREIGN_NAMES, "f_net"), (TRUST_NAMES, "t_net"), (DEALER_NAMES, "d_net")]:
-        sub = inst[inst["name"].isin(name_set)].groupby("stock_id")["net"].sum()
-        for code, v in sub.items():
-            out.setdefault(code, {"f_net": 0.0, "t_net": 0.0, "d_net": 0.0})[key] = round(float(v), 1)
+    inst["b"] = pd.to_numeric(inst["buy"], errors="coerce").fillna(0) / 1000.0
+    inst["s"] = pd.to_numeric(inst["sell"], errors="coerce").fillna(0) / 1000.0
+    for name_set, tag in [(FOREIGN_NAMES, "f"), (TRUST_NAMES, "t"), (DEALER_NAMES, "d")]:
+        sub = inst[inst["name"].isin(name_set)].groupby("stock_id")[["b", "s"]].sum()
+        for code, r in sub.iterrows():
+            o = out.setdefault(code, dict(_INST_ZERO))
+            o[tag + "_buy"] = round(float(r["b"]), 1)
+            o[tag + "_sell"] = round(float(r["s"]), 1)
+            o[tag + "_net"] = round(float(r["b"] - r["s"]), 1)
     return out
 
 
@@ -190,7 +198,7 @@ def build_rows(d: str, dfs, prev_inv: dict[str, float], meta: dict) -> list:
         chg_pct = round(float(spread) / float(prev_close) * 100, 2) \
             if prev_close not in (None, 0) and pd.notna(spread) else 0.0
 
-        inst_d = inst_map.get(code, {"f_net": 0.0, "t_net": 0.0, "d_net": 0.0})
+        inst_d = inst_map.get(code, _INST_ZERO)
         t_net, f_net, d_net = inst_d["t_net"], inst_d["f_net"], inst_d["d_net"]
 
         # 庫存累計：inv(t) = max(0, inv(t-1) + t_net)，下限 0
@@ -213,6 +221,7 @@ def build_rows(d: str, dfs, prev_inv: dict[str, float], meta: dict) -> list:
             d_net, int(round(d_net * float(close))),
             t_inv,
             sh["f_shares"], sh["f_pct"],
+            inst_d["f_buy"], inst_d["f_sell"], inst_d["t_buy"], inst_d["t_sell"], inst_d["d_buy"], inst_d["d_sell"],
         ])
     rows.sort(key=lambda x: x[0])
     return rows

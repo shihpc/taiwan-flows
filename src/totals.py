@@ -25,8 +25,54 @@ ROOT = Path(__file__).resolve().parent.parent
 TOTALS_PATH = ROOT / "data" / "totals.json"
 
 TWSE_BFI = "https://www.twse.com.tw/rwd/zh/fund/BFI82U"
+TWSE_FMTQIK = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK"   # 上市大盤每日成交金額（整月）
 TPEX_SUM = "https://www.tpex.org.tw/www/zh-tw/insti/summary"
+TPEX_INDEX = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex"  # 上櫃大盤
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+
+def _roc_to_iso(s: str) -> str | None:
+    """民國 115/06/12 → 2026-06-12。"""
+    try:
+        y, m, d = str(s).split("/")
+        return f"{int(y) + 1911}-{int(m):02d}-{int(d):02d}"
+    except Exception:
+        return None
+
+
+def fetch_tse_turnover_month(yyyymm: str) -> dict[str, int]:
+    """FMTQIK：回傳該月 {date: 成交金額(千元)}（上市大盤）。"""
+    j = _get_json(TWSE_FMTQIK, {"date": yyyymm + "01", "response": "json"})
+    out: dict[str, int] = {}
+    if not j or j.get("stat") != "OK":
+        return out
+    for row in j.get("data", []):
+        iso = _roc_to_iso(row[0])
+        if iso:
+            out[iso] = round(float(str(row[2]).replace(",", "")) / 1000)  # 成交金額 元→千元
+    return out
+
+
+def fetch_otc_turnover(d: str) -> int | None:
+    """上櫃大盤單日成交金額（千元）。TPEx 部分端點 SSL 異常，必要時關閉驗證重試。"""
+    for verify in (True, False):
+        try:
+            r = requests.get(TPEX_INDEX, params={"date": d.replace("-", "/"), "response": "json"},
+                             headers=HEADERS, timeout=20, verify=verify)
+            j = r.json()
+        except Exception:
+            continue
+        tables = j.get("tables") if isinstance(j, dict) else None
+        if not tables:
+            continue
+        for tbl in (tables if isinstance(tables, list) else [tables]):
+            for row in (tbl.get("data") or []):
+                if "成交金額" in str(row[0]) or "成交金額" in str(tbl.get("title", "")):
+                    try:
+                        return round(float(str(row[-1]).replace(",", "")) / 1000)
+                    except Exception:
+                        pass
+    return None
 
 # 上市 BFI82U 列名（無「合計」列，需加總分項）
 TSE_FOREIGN = {"外資及陸資(不含外資自營商)", "外資自營商"}
