@@ -88,6 +88,16 @@
   tbody tr:nth-child(odd) td{background:#0c121a}
   tbody tr:nth-child(odd) td.code,tbody tr:nth-child(odd) td.name{background:#0c121a}
   tbody tr:hover td{background:#142030}
+  /* 外資買賣超 歷史表：較寬的凍結期間欄 + 年/分節列 */
+  th.flbl,td.flbl{position:sticky;left:0;background:var(--panel);z-index:2;text-align:left;
+    width:118px;min-width:118px;max-width:118px;white-space:nowrap}
+  th.flbl{z-index:3}
+  tbody tr:nth-child(odd) td.flbl{background:#0c121a}
+  tr.yrow td{background:#15202e;font-weight:700;color:var(--fg);border-top:1px solid var(--accent2)}
+  tr.yrow td.flbl{background:#15202e;color:var(--accent)}
+  tr.srow td{background:#101722;color:var(--accent);font-weight:700}
+  tr.srow td.flbl{background:#101722}
+  .ff-grp{display:flex;gap:6px;align-items:center;margin:2px 0 8px;flex-wrap:wrap}
   .up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--dim)}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
@@ -185,6 +195,7 @@
     <div class="tab" data-tab="sync">外資投信同步</div>
     <div class="tab" data-tab="oppose">外資投信對作</div>
     <div class="tab" data-tab="etf">ETF市值</div>
+    <div class="tab" data-tab="foreignflows">外資買賣超</div>
   </div>
 </header>
 
@@ -244,6 +255,7 @@ async function boot(){
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
   await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
   try{ state.totals = await (await fetch("data/totals.json",{cache:"no-cache"})).json(); }catch(e){ state.totals=null; }
+  try{ state.foreignHist = await (await fetch("data/foreign_history.json",{cache:"no-cache"})).json(); }catch(e){ state.foreignHist=null; }
   try{
     const s = await (await fetch("data/status.json",{cache:"no-cache"})).json();
     const el = document.getElementById("status");
@@ -407,6 +419,63 @@ function renderEtf(page){
   return html;
 }
 
+// ----- 外資買賣超 tab：市場別 年/月 歷史 + 近期（讀 foreign_history.json，官方 TWSE+TPEx）-----
+function ffSum(recs){
+  const acc={tse:{buy_k:0,sell_k:0,net_k:0},otc:{buy_k:0,sell_k:0,net_k:0},_o:0};
+  for(const r of recs){ if(!r) continue;
+    if(r.tse){ for(const k in acc.tse) acc.tse[k]+=r.tse[k]; }
+    if(r.otc){ for(const k in acc.otc) acc.otc[k]+=r.otc[k]; acc._o++; } }
+  if(acc._o===0) acc.otc=null; delete acc._o; return acc;
+}
+function ffAgg(rec){
+  const t=rec.tse||null, o=rec.otc||null; let all=null, share=null;
+  if(t&&o){ all={buy_k:t.buy_k+o.buy_k,sell_k:t.sell_k+o.sell_k,net_k:t.net_k+o.net_k};
+    const tot=all.buy_k+all.sell_k, ov=o.buy_k+o.sell_k; share=tot?ov/tot*100:null; }
+  return {tse:t,otc:o,all,share};
+}
+function ffRow(label, rec, cls){
+  const a=ffAgg(rec), c=(o,k)=>o?fmtYi(o[k]):"—", nc=(o,k)=>o?sign(o[k],fmtYi(o[k])):"—";
+  return `<tr class="${cls||''}"><td class="flbl">${label}</td>`+
+    `<td>${c(a.tse,'buy_k')}</td><td>${c(a.tse,'sell_k')}</td><td>${nc(a.tse,'net_k')}</td>`+
+    `<td>${c(a.otc,'buy_k')}</td><td>${c(a.otc,'sell_k')}</td><td>${nc(a.otc,'net_k')}</td>`+
+    `<td>${c(a.all,'buy_k')}</td><td>${c(a.all,'sell_k')}</td><td>${nc(a.all,'net_k')}</td>`+
+    `<td>${a.share==null?'—':a.share.toFixed(1)+'%'}</td></tr>`;
+}
+function renderForeignFlows(){
+  const fh=state.foreignHist;
+  if(!fh||!fh.monthly){ return `<div class="loading">外資買賣超資料尚未產生（data/foreign_history.json）</div>`; }
+  const months=fh.monthly, daily=fh.daily||{};
+  const yrs={}; for(const ym in months){ (yrs[ym.slice(0,4)]=yrs[ym.slice(0,4)]||[]).push(ym); }
+  const mLabel=ym=>{ const m=+ym.slice(5,7);
+    return ym===fh.latest_date.slice(0,7) ? `${m}月（截至 ${fh.latest_date.slice(5).replace('-','/')}）` : m+"月"; };
+  let body="";
+  for(const y of Object.keys(yrs).sort()){
+    const yms=yrs[y].sort();
+    body+=ffRow(y+" 年", ffSum(yms.map(ym=>months[ym])), "yrow");
+    for(const ym of yms) body+=ffRow(mLabel(ym), months[ym], "");
+  }
+  const dd=Object.keys(daily).sort();
+  if(dd.length){
+    const latest=dd[dd.length-1], dt=parseDate(latest), dow=(dt.getDay()+6)%7, mon=new Date(dt); mon.setDate(dt.getDate()-dow);
+    const monS=fmtDate(mon), lm=new Date(mon); lm.setDate(mon.getDate()-7); const lmS=fmtDate(lm);
+    const lf=new Date(lm); lf.setDate(lm.getDate()+4); const lfS=fmtDate(lf);
+    const tw=dd.filter(d=>d>=monS&&d<=latest), lw=dd.filter(d=>d>=lmS&&d<=lfS), l5=dd.slice(-5);
+    const rg=(a,b)=>a.slice(5).replace('-','/')+"~"+b.slice(5).replace('-','/');
+    body+=`<tr class="srow"><td class="flbl">近期</td><td colspan="10"></td></tr>`;
+    if(lw.length) body+=ffRow("上週 "+rg(lmS,lfS), ffSum(lw.map(d=>daily[d])), "");
+    if(tw.length) body+=ffRow("本週 "+rg(monS,latest), ffSum(tw.map(d=>daily[d])), "");
+    if(l5.length) body+=ffRow("近5日", ffSum(l5.map(d=>daily[d])), "");
+  }
+  const nM=Object.keys(months).length, nO=Object.values(months).filter(m=>m.otc).length;
+  const note = nO<nM ? `<div class="muted" style="font-size:11px;margin-bottom:6px">上櫃歷史回補中（已 ${nO}/${nM} 月）；未補月份「上櫃／合計／OTC佔比」暫顯「—」，完成後自動補齊。</div>` : "";
+  const thead=`<thead>
+    <tr><th class="flbl" rowspan="2">期間</th><th colspan="3">上市 TSE</th><th colspan="3">上櫃 OTC</th><th colspan="3">合計</th><th rowspan="2">OTC佔比</th></tr>
+    <tr><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th></tr></thead>`;
+  return `<div class="muted" style="font-size:11px;margin-bottom:6px">外資買賣超（上市＝證交所 BFI82U、上櫃＝櫃買，官方口徑）。單位：億元；「淨」＝買賣差額。最新 ${fh.latest_date}。</div>`
+    + note
+    + `<div class="tablewrap" style="max-height:none"><table>${thead}<tbody>${body}</tbody></table></div>`;
+}
+
 function updateDateLabel(){
   const el=document.getElementById("daterow");
   const wk={thisweek:"本週",thismonth:"本月",lastweek:"上週",lastmonth:"上月",custom:"自訂區間"};
@@ -528,6 +597,11 @@ function render(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
   updateDateLabel();
+  if(state.tab==="foreignflows"){
+    document.getElementById("futbar").style.display="none";
+    document.getElementById("main").innerHTML=renderForeignFlows();
+    bindSegs(); return;
+  }
   if(state.mode==="custom" && !state.customPages){ updateFutbar(); renderPicker(); return; }
   const pages = currentPages();
   updateFutbar();
@@ -777,9 +851,11 @@ function xlTable(ws,r0,c0,title,cols,rows,W){
   return hr+1+(rows?rows.length:0);
 }
 function xlApplyWidth(ws,W){ for(const k in W) ws.getColumn(+k).width=W[k]; }
-function xlSheet(wb,name){
-  return wb.addWorksheet(name,{pageSetup:{paperSize:9,orientation:"portrait",fitToPage:true,
-    fitToWidth:1,fitToHeight:1,margins:{left:0.25,right:0.25,top:0.35,bottom:0.35,header:0.15,footer:0.15}},
+function xlSheet(wb,name,opt){
+  opt=opt||{};
+  return wb.addWorksheet(name,{pageSetup:{paperSize:opt.a3?8:9,orientation:opt.land?"landscape":"portrait",
+    fitToPage:true,fitToWidth:1,fitToHeight:opt.land?0:1,
+    margins:{left:0.25,right:0.25,top:0.35,bottom:0.35,header:0.15,footer:0.15}},
     views:[{showGridLines:false}]});
 }
 // 取某日期區間的逐檔聚合頁（鏡像 runCustomRange，但回傳 pages 不改 state）
@@ -863,6 +939,30 @@ async function buildExcel(){
       const FUT=[{h:"時點",v:r=>r.n,w:16,left:true},{h:"未平倉口數",v:r=>r.lots,fmt:'#,##0',w:12},{h:"金額",v:r=>r.amt,fmt:'#,##0.0"億"',w:11}];
       xlTable(ws,row,1,null,FUT,futRows,W);
       xlApplyWidth(ws,W); }
+    // 外資買賣超：市場別 年/月 歷史 + 近5日（官方 TWSE+TPEx，A3 橫向）
+    if(state.foreignHist){
+      const fh=state.foreignHist, months=fh.monthly, daily=fh.daily||{};
+      const ws=xlSheet(wb,"外資買賣超",{a3:true,land:true}), W={};
+      head(ws,"外資買賣超　官方 TWSE+TPEx　最新 "+fh.latest_date); let row=3;
+      row=sub(ws,row,"單位：億元；「淨」＝買賣差額。上市＝證交所 BFI82U、上櫃＝櫃買。");
+      const flat=(label,rec)=>{ const a=ffAgg(rec); const z=(o,k)=>o?o[k]/1e5:null;
+        return {n:label,tb:z(a.tse,'buy_k'),ts:z(a.tse,'sell_k'),tn:z(a.tse,'net_k'),
+          ob:z(a.otc,'buy_k'),os:z(a.otc,'sell_k'),on:z(a.otc,'net_k'),
+          ab:z(a.all,'buy_k'),asx:z(a.all,'sell_k'),an:z(a.all,'net_k'),sh:a.share}; };
+      const rows=[], yrs={}; for(const ym in months){ (yrs[ym.slice(0,4)]=yrs[ym.slice(0,4)]||[]).push(ym); }
+      for(const y of Object.keys(yrs).sort()){ const yms=yrs[y].sort();
+        rows.push(flat(y+" 年", ffSum(yms.map(ym=>months[ym]))));
+        for(const ym of yms) rows.push(flat(ym===fh.latest_date.slice(0,7)?ym+"（截至"+fh.latest_date.slice(5).replace('-','/')+"）":ym, months[ym])); }
+      const dd=Object.keys(daily).sort();
+      if(dd.length) rows.push(flat("近5日", ffSum(dd.slice(-5).map(d=>daily[d]))));
+      const A=(h,k)=>({h,v:r=>r[k],fmt:'#,##0.0"億"',w:11});
+      const FF=[{h:"期間",v:r=>r.n,w:20,left:true},
+        A("上市買","tb"),A("上市賣","ts"),A("上市淨","tn"),
+        A("上櫃買","ob"),A("上櫃賣","os"),A("上櫃淨","on"),
+        A("合計買","ab"),A("合計賣","asx"),A("合計淨","an"),
+        {h:"OTC佔比",v:r=>r.sh,fmt:'0.0"%"',w:9}];
+      xlTable(ws,row,1,null,FF,rows,W); xlApplyWidth(ws,W);
+    }
 
     const buf=await wb.xlsx.writeBuffer();
     const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});

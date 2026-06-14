@@ -1,6 +1,6 @@
 # taiwan-flows — 開發接軌文件（給新 Session / 新對話）
 
-三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值** 五個分頁。
+三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值 / 外資買賣超** 六個分頁。
 盤後資料 → GitHub Actions 每日抓取與預算 → commit JSON → GitHub Pages 純前端秒載。
 
 - **本機位置**：`C:\Users\施伯承\Desktop\Claude\taiwan-flows`
@@ -38,7 +38,10 @@ GitHub Pages
 | `python src/backfill.py --days 65` | 回補逐檔 daily（升序，庫存鏈才正確） |
 | `python src/backfill_market.py` | 回補 futures + totals（讀 meta.calendar） |
 | `python src/budget.py` | 重算 latest.json + latest_ranges.json |
-| `python src/run_daily.py` | 排程入口：pipeline + budget + status.json（Actions 用） |
+| `python src/foreign_backfill.py` | 一次性回補上櫃外資逐日（TPEx Daily）→ data/_otc_daily.json（2024→2026-03，已跑完 525 天） |
+| `python src/foreign_flows.py` | 重算 foreign_history.json（外資買賣超 tab：FinMind 上市 + _otc_daily/totals 上櫃，月/年聚合） |
+| `python src/rebuild_daily.py` | daily schema 變更後重抓歷史（如新增 f/t/d buy/sell 欄；升序保庫存鏈） |
+| `python src/run_daily.py` | 排程入口：pipeline + budget + foreign_flows + status.json（Actions 用） |
 
 每日排程 `.github/workflows/daily.yml`：09:30 UTC（17:30 台北）週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。
 
@@ -69,6 +72,12 @@ GitHub Pages
 - **投信/外資進出頁**排行鈕：依金額 / 依持股變動率 / 佔成交量（三者皆與買超/賣超連動）。
 - 注意：`bindSegs()` 只綁 `.seg[data-seg]`（卡片的日/週/月、上市櫃等 seg 無 data-seg，自行綁 onclick，勿被覆蓋）。
 
+## 外資買賣超 tab（市場別月/年歷史，2026-06 新增）
+
+- **資料**：`data/foreign_history.json`＝`{latest_date, monthly:{"YYYY-MM":{tse:{buy_k,sell_k,net_k},otc:{...}|null}}, daily:{近30交易日}}`（千元）。年總/本週/上週/近5日由前端 `renderForeignFlows()` 聚合，合計＝tse+otc，OTC佔比＝OTC總量÷合計總量。
+- **資料源決策（重要）**：**棄用 CMoney 附件**——附件 2026 月值與官方 TWSE 差 ~3 倍且 net 正負相反（附件像更早年份的真實規模；本資料集 2026 市場本身放大 ~2.3×）。改用**官方**：上市＝FinMind `TaiwanStockTotalInstitutionalInvestors`（外資＝Foreign_Investor+Foreign_Dealer_Self，源自證交所；淨額與官方 BFI82U 65 天僅 2 天差、最大 21 億；近 65 天再用 totals.json 官方覆蓋）；上櫃＝TPEx Daily 逐日回補（`_otc_daily.json`，2024-01→2026-03 共 525 天）+ totals.json 近期。**TWSE BFI82U 只支援 type=day**（month 回 HTML、year 回無資料）；**TPEx type=Monthly 忽略 date 只回當月**——所以歷史只能逐日。OTC佔比 13-18%，與附件歷史一致（方法學交叉驗證）。
+- **前端**：tab=`foreignflows`，獨立歷史表（凍結「期間」欄 `.flbl` 118px、年列 `.yrow`、分節列 `.srow`），不吃 mode/區間。當月列標「N月（截至 MM/DD）」。Excel 多一張「外資買賣超」工作表（A3 橫向，`xlSheet(wb,name,{a3:true,land:true})`）。
+
 ## 規格後的演進（規格書未涵蓋、已實作）
 
 - 新增「外資投信對作」tab（外資投信反向）；同步頁與對作頁加「強度=min(雙方金額)」並依此排序。
@@ -88,6 +97,14 @@ index.html  .github/workflows/daily.yml  taiwan-flows-spec_V1.md
 ```
 
 daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct`（張/千元/%）。
+
+## 進行中需求（2026-06-14 大指令，Part 3 已完成，1/2/4/5 待續）
+
+使用者一次給 5 部分。**Part 3（外資買賣超 tab + Excel sheet）已完成並驗證**。其餘待做：
+- **Part 1**：三大法人卡加「外資佔比」＝(外資買金額+外資賣金額)/(2×市場成交金額)，XX.X%。需把**市場成交金額**加進 `totals.json`（`totals.py` 已有 `fetch_tse_turnover_month`(FMTQIK) + `fetch_otc_turnover`，**尚未寫入 totals.json schema**，要加欄＋回補 65 天＋前端 `renderTotCard` 顯示）。
+- **Part 2**：ETF tab「市值排行」「成交金額排行」都加 外資/投信/自營佔比三欄；成交金額排行佔比＝(該股買+賣金額)/(2×市場成交金額)，並加 外資買/賣、投信買/賣、自營買/賣 六欄（daily 已有 f/t/d buy/sell 分欄，`budget.py page_etf` + 前端 `renderEtf`/`jPageEtf` 要改）。
+- **Part 4**：Excel 各工作表欄位調整——外資/投信進出加持股張數+持股市值；外資投信同步拿掉加總、加投信金額/張+外資金額/張；對作對齊同步；ETF市值拿掉漲跌、加佔比三欄；大盤資金三大法人加佔比+買賣分欄、台指期拿掉金額改未平倉部位市值。
+- **Part 5**：把 Excel「ETF市值」與「大盤資金」兩張工作表整合成同一張。
 
 ## 待辦 / 已知限制
 

@@ -13,6 +13,7 @@ Thumbs.db
 # local run logs
 logs_backfill.txt
 logs_market*.txt
+logs_rebuild.txt
 
 # local preview config
 .claude/

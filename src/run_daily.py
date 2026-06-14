@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pipeline import run_date  # noqa: E402
 import budget  # noqa: E402
+import foreign_flows  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("run_daily")
@@ -63,6 +64,19 @@ def main() -> None:
         budget.main()  # 預設含期貨卡
     finally:
         sys.argv = argv
+
+    # 外資買賣超歷史（market 別月/年）— 非致命
+    try:
+        logger.info("重算 foreign_history.json …")
+        argv = sys.argv
+        sys.argv = [argv[0]]
+        try:
+            foreign_flows.main()
+        finally:
+            sys.argv = argv
+    except Exception as e:
+        logger.warning(f"foreign_flows 失敗（略過）：{e}")
+
     write_status(d, "ok", "")
     logger.info(f"=== {d} 完成 ===")
 
