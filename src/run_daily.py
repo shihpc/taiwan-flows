@@ -27,12 +27,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("run_daily")
 
 TPE = timezone(timedelta(hours=8))
-STATUS_PATH = Path(__file__).resolve().parent.parent / "data" / "status.json"
+DATA = Path(__file__).resolve().parent.parent / "data"
+STATUS_PATH = DATA / "status.json"
+
+
+def gather_sources() -> dict:
+    """各資料源「最新有資料日」，給前端各卡/tab 標示資料源日期、偵測落後。"""
+    src: dict[str, str] = {}
+    try:  # 逐檔法人/股價（FinMind）→ meta.calendar 末日
+        cal = json.loads((DATA / "meta.json").read_text(encoding="utf-8")).get("calendar", [])
+        if cal:
+            src["daily"] = cal[-1]
+    except Exception:
+        pass
+    try:  # 市場三大法人（證交所 BFI82U + 櫃買 TPEx）
+        tot = json.loads((DATA / "totals.json").read_text(encoding="utf-8"))
+        ds = tot.get("dates") or sorted(tot.get("rows", {}))
+        if ds:
+            src["totals"] = ds[-1]
+    except Exception:
+        pass
+    try:  # 台指期未平倉（期交所）→ futures 最新檔
+        files = sorted((DATA / "futures").glob("*.json"))
+        if files:
+            s = files[-1].stem
+            src["futures"] = f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    except Exception:
+        pass
+    try:  # 外資買賣超官方歷史
+        fh = json.loads((DATA / "foreign_history.json").read_text(encoding="utf-8"))
+        if fh.get("latest_date"):
+            src["foreign"] = fh["latest_date"]
+    except Exception:
+        pass
+    return src
 
 
 def write_status(date: str, status: str, note: str = "") -> None:
     STATUS_PATH.write_text(
         json.dumps({"date": date, "status": status, "note": note,
+                    "sources": gather_sources(),
                     "checked_at": datetime.now(TPE).isoformat()},
                    ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")

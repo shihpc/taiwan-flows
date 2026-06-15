@@ -101,6 +101,10 @@
     border:1px solid var(--accent2);border-radius:3px;margin-right:4px;font-weight:700;user-select:none}
   .ff-grp{display:flex;gap:6px;align-items:center;margin:2px 0 8px;flex-wrap:wrap}
   .up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--dim)}
+  /* 各卡/tab 資料源日期徽章 */
+  .srcdate{display:inline-block;font-size:10px;color:var(--dim);border:1px solid var(--line);
+    border-radius:8px;padding:0 7px;margin-left:8px;white-space:nowrap;vertical-align:middle;font-weight:400}
+  .srcdate.lag{color:#e0b341;border-color:#3a3318}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
@@ -245,6 +249,26 @@ const fmtYiM = m => (m==null?"—":yiStr(m/100));   // 百萬 → 億
 const fmtLot = n => (n==null?"—":Math.round(n).toLocaleString("en-US"));
 const fmtPct = p => (p==null?"—":(p>0?"+":"")+p.toFixed(2)+"%");
 const fmtShare = s => (s==null?"—":s.toFixed(1)+"%");
+// ---- 各資料源最新日（給卡/tab 標示、偵測落後）----
+const SRC_LABEL={daily:"逐檔法人/股價 · FinMind",totals:"市場三大法人 · 證交所/櫃買",
+  futures:"台指期未平倉 · 期交所",foreign:"外資買賣超官方歷史 · 證交所/櫃買"};
+function srcDate(key){
+  const s=state.status&&state.status.sources?state.status.sources[key]:null;
+  if(s) return s;
+  if(key==="daily")   return state.latest&&state.latest.date;
+  if(key==="totals")  return state.totals&&state.totals.dates&&state.totals.dates[state.totals.dates.length-1];
+  if(key==="foreign") return state.foreignHist&&state.foreignHist.latest_date;
+  return null;
+}
+function newestSrc(){
+  const ds=["daily","totals","futures","foreign"].map(srcDate).filter(Boolean);
+  return ds.length?ds.reduce((a,b)=>a>b?a:b):null;
+}
+function srcBadge(key,override){
+  const d=override||srcDate(key); if(!d) return "";
+  const newest=newestSrc(), lag=newest&&d<newest;
+  return `<span class="srcdate${lag?' lag':''}" title="${SRC_LABEL[key]||''}${lag?'（落後，最新 '+newest+'）':''}">資料源 · ${d.slice(5)}${lag?' (落後)':''}</span>`;
+}
 const sign = (v,txt) => `<span class="${v>0?'up':v<0?'down':'muted'}">${txt}</span>`;
 const chg = p => p==null?'<span class="muted">—</span>':`<span class="${p>0?'up':p<0?'down':'muted'}">${fmtPct(p)}</span>`;
 const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_blank" rel="noopener">${c}</a>`;
@@ -262,6 +286,7 @@ async function boot(){
   try{ state.foreignHist = await (await fetch("data/foreign_history.json",{cache:"no-cache"})).json(); }catch(e){ state.foreignHist=null; }
   try{
     const s = await (await fetch("data/status.json",{cache:"no-cache"})).json();
+    state.status = s;
     const el = document.getElementById("status");
     if(s.status==="ok"){ el.textContent="資料已更新 "+s.date; el.className="status ok"; }
     else if(s.status==="no_data"){ el.textContent="尚未開盤/非交易日"; el.className="status nodata"; }
@@ -481,7 +506,7 @@ function renderForeignFlows(){
   const thead=`<thead>
     <tr><th class="flbl" rowspan="2">期間</th><th colspan="3">上市 TSE</th><th colspan="3">上櫃 OTC</th><th colspan="3">合計</th><th rowspan="2">OTC佔比</th></tr>
     <tr><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th></tr></thead>`;
-  return `<div class="muted" style="font-size:11px;margin-bottom:6px">外資買賣超（上市＝證交所 BFI82U、上櫃＝櫃買，官方口徑）。單位：億元；「淨」＝買賣差額。最新 ${fh.latest_date}。年度累計點 ＋ 展開月份。</div>`
+  return `<div class="muted" style="font-size:11px;margin-bottom:6px">外資買賣超（上市＝證交所 BFI82U、上櫃＝櫃買，官方口徑）。單位：億元；「淨」＝買賣差額。年度累計點 ＋ 展開月份。${srcBadge("foreign")}</div>`
     + note
     + `<div class="tablewrap" style="max-height:none"><table>${thead}<tbody>${body}</tbody></table></div>`;
 }
@@ -506,7 +531,8 @@ function updateDateLabel(){
     const w=state.ranges.windows[state.mode];
     txt=`${w.start} ~ ${w.end}（${w.trading_days} 交易日）`;
   }
-  el.innerHTML=`<span>${txt}</span>`+(repick?`<button id="rRepick">重選區間</button>`:``);
+  const badge = state.tab==="foreignflows" ? "" : srcBadge("daily");
+  el.innerHTML=`<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
 }
@@ -554,7 +580,7 @@ function renderTotCard(){
     +(extra||"")+`</div>`;
   const fExtra=`<span class="k">外資佔比</span><span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span>`;
   el.innerHTML=`<div class="cardwrap">
-    <div class="cardhead"><span class="ttl">三大法人買賣超</span>
+    <div class="cardhead"><span class="ttl">三大法人買賣超</span>${srcBadge("totals")}
       <div class="seg tmkt">${mbtn("tse","上市")}${mbtn("otc","上櫃")}${mbtn("all","合計")}</div>
       <div class="seg tsel">${btn("day","日")}${btn("week","週")}${btn("month","月")}</div>
       <select id="totSel">${opts}</select></div>
@@ -602,7 +628,7 @@ async function updateFutbar(){
   const mktval = taiex!=null ? cur.lots*taiex*200/1e8 : null;
   el.style.display="flex";
   el.innerHTML=`<div class="cardwrap tight">
-    <div class="cardhead"><span class="ttl">台指期 外資未平倉</span>
+    <div class="cardhead"><span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}
       <span class="k">${d2}</span><span class="k">vs</span>
       <select id="futSel">${opts}</select>
       <span class="k">${ref?ref:"無此基準"}</span></div>
