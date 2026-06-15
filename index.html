@@ -187,6 +187,7 @@
     <div class="mode" data-mode="custom">自訂區間</div>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
     <button class="info-btn" id="xlsxBtn">⬇ 下載 Excel</button>
+    <button class="info-btn" id="updBtn" title="觸發 GitHub Actions 重新抓取盤後資料（需一次性設定 Token）">🔄 更新資料</button>
   </div>
   <div class="daterow" id="daterow"></div>
   <div id="totbar" class="fcard" style="display:none"></div>
@@ -1036,6 +1037,40 @@ async function buildExcel(){
   finally{ btn.textContent=old; }
 }
 document.getElementById("xlsxBtn").onclick=buildExcel;
+
+// ---------- 手動觸發 GitHub Actions（daily-flows）重新抓資料 ----------
+// Token 只存在瀏覽器本機 localStorage，不進頁面原始碼、不上傳。Shift+點 可重設 Token。
+const GH_REPO="shihpc/taiwan-flows", GH_WF="daily.yml";  // 工作流程檔名（name 為 daily-flows）
+async function triggerUpdate(reset){
+  let tok = reset ? null : localStorage.getItem("tf_gh_token");
+  if(!tok){
+    tok = prompt("貼上 GitHub Personal Access Token 以觸發更新：\n"+
+      "• 建議 fine-grained，僅本 repo、權限 Actions: Read and write\n"+
+      "• （或 classic token，勾選 repo 範圍）\n"+
+      "• 只會存在你這台瀏覽器（localStorage），不會上傳或寫進網頁");
+    if(!tok) return;
+    tok=tok.trim(); localStorage.setItem("tf_gh_token", tok);
+  }
+  const btn=document.getElementById("updBtn"), old=btn.textContent; btn.textContent="觸發中…";
+  try{
+    const r=await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${GH_WF}/dispatches`,{
+      method:"POST",
+      headers:{"Authorization":"Bearer "+tok,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},
+      body:JSON.stringify({ref:"main"})
+    });
+    if(r.status===204){
+      alert("✅ 已觸發更新（daily-flows）。\n約 2-3 分鐘後資料更新完成，請稍後重新整理本頁。\n\n提醒：三大法人資料約 20:00 才齊，太早觸發可能抓不到當日法人。");
+    } else if(r.status===401 || r.status===403){
+      localStorage.removeItem("tf_gh_token");
+      alert("❌ Token 無效或權限不足（已清除）。\n請再點一次「更新資料」並貼上具 Actions 讀寫權限的 Token。");
+    } else {
+      const t=await r.text();
+      alert("❌ 觸發失敗（HTTP "+r.status+"）：\n"+t.slice(0,300));
+    }
+  }catch(e){ alert("❌ 連線失敗："+e); }
+  finally{ btn.textContent=old; }
+}
+document.getElementById("updBtn").onclick=e=>triggerUpdate(e.shiftKey);
 
 // ---------- info overlay ----------
 const overlay = document.getElementById("overlay");
