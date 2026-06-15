@@ -2,8 +2,8 @@ name: daily-flows
 
 on:
   schedule:
-    # 17:30 台北 = 09:30 UTC，週一~週五（非交易日由程式自行跳過）
-    - cron: "30 9 * * 1-5"
+    # 21:00 台北 = 13:00 UTC，週一~週五（此時三大法人/外資持股/融資 OI 都已齊；非交易日由程式自行跳過）
+    - cron: "0 13 * * 1-5"
   workflow_dispatch: {}   # GitHub App 手動觸發
 
 # 讓 GITHUB_TOKEN 能 push commit

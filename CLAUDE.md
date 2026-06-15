@@ -43,7 +43,7 @@ GitHub Pages
 | `python src/rebuild_daily.py` | daily schema 變更後重抓歷史（如新增 f/t/d buy/sell 欄；升序保庫存鏈） |
 | `python src/run_daily.py` | 排程入口：pipeline + budget + foreign_flows + status.json（Actions 用） |
 
-每日排程 `.github/workflows/daily.yml`：09:30 UTC（17:30 台北）週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。
+每日排程 `.github/workflows/daily.yml`：**13:00 UTC（21:00 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00。）
 
 ## 資料來源與口徑（重要，踩過的雷）
 
