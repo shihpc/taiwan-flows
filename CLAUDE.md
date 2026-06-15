@@ -126,6 +126,11 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 後端：`run_daily.py` 的 `gather_sources()` 把四源最新日寫進 `status.json.sources`：`daily`(meta.calendar 末日)、`totals`(totals.json 末日)、`futures`(futures 最新檔)、`foreign`(foreign_history.latest_date)。
 - 前端：`srcDate/newestSrc/srcBadge`（讀 `state.status.sources`，缺時後備用已載入 JSON 的日期）。掛在 三大法人卡(totals)、台指期卡(futures)、daterow(daily，foreignflows 不掛)、外資買賣超 tab 說明列(foreign)。
 
+### Excel 可選基準日 + 各源日期標示
+- 模式列加 `#xlsxDate`（type=date，預設 `state.latest.date`、min/max=calendar 範圍）；`xlsxAnchor()` 取值並吸附到 ≤ 該日的最近交易日，`buildExcel` 的 `d2` 改用它（檔名、各表期間都跟著）。
+- 各工作表標題改「基準日 d2」，標題下加「資料源：<來源> · <日期>」說明列；`srcAsOf(key,d2)`：daily=d2、totals/futures 取 ≤d2 最近、foreign=歷史最新。ETF與大盤列出三源各自日期。
+- 限制：「外資買賣超」工作表是完整歷史（近期段相對最新日），不隨選定的過去 d2 改變。
+
 ### 網頁手動更新鍵
 - 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。Token 由使用者一次性貼上、存瀏覽器 `localStorage('tf_gh_token')`（不進原始碼/不上傳）；Shift+點 可重設 Token；401/403 自動清除。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
 

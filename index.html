@@ -105,6 +105,8 @@
   .srcdate{display:inline-block;font-size:10px;color:var(--dim);border:1px solid var(--line);
     border-radius:8px;padding:0 7px;margin-left:8px;white-space:nowrap;vertical-align:middle;font-weight:400}
   .srcdate.lag{color:#e0b341;border-color:#3a3318}
+  .modes input.xdate{flex:0 0 auto;background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    border-radius:14px;padding:3px 9px;font-family:inherit;font-size:12px;color-scheme:dark}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
@@ -190,6 +192,7 @@
     <div class="mode" data-mode="lastmonth">上月</div>
     <div class="mode" data-mode="custom">自訂區間</div>
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
+    <input type="date" id="xlsxDate" class="xdate" title="Excel 匯出基準日（預設最新交易日，可選範圍內任一日）">
     <button class="info-btn" id="xlsxBtn">⬇ 下載 Excel</button>
     <button class="info-btn" id="updBtn" title="觸發 GitHub Actions 重新抓取盤後資料（需一次性設定 Token）">🔄 更新資料</button>
   </div>
@@ -282,6 +285,8 @@ async function boot(){
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
   await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
+  { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
+    if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
   try{ state.totals = await (await fetch("data/totals.json",{cache:"no-cache"})).json(); }catch(e){ state.totals=null; }
   try{ state.foreignHist = await (await fetch("data/foreign_history.json",{cache:"no-cache"})).json(); }catch(e){ state.foreignHist=null; }
   try{
@@ -929,6 +934,21 @@ function xlSheet(wb,name,onePage){
     margins:{left:0.2,right:0.2,top:0.3,bottom:0.3,header:0.1,footer:0.1}},
     views:[{showGridLines:false}]});
 }
+// Excel 匯出基準日：取選擇器的值，吸附到 ≤ 該日的最近交易日；無值則用最新
+function xlsxAnchor(){
+  const cal=state.meta.calendar, picked=(document.getElementById("xlsxDate")||{}).value;
+  if(!picked) return state.latest.date;
+  if(cal.includes(picked)) return picked;
+  const le=cal.filter(d=>d<=picked); return le.length?le[le.length-1]:cal[0];
+}
+// 某資料源在此匯出反映的日期（≤ 基準日 d2）：daily=d2、totals/futures 取 ≤d2 最近、foreign=歷史最新
+function srcAsOf(key,d2){
+  if(key==="daily") return d2;
+  if(key==="totals"){ const ds=state.totals&&state.totals.dates; if(ds){ const le=ds.filter(x=>x<=d2); return le.length?le[le.length-1]:null; } return null; }
+  if(key==="foreign") return state.foreignHist&&state.foreignHist.latest_date;
+  if(key==="futures"){ const f=srcDate("futures"); return (f&&f<=d2)?f:d2; }
+  return null;
+}
 // 取某日期區間的逐檔聚合頁（鏡像 runCustomRange，但回傳 pages 不改 state）
 async function pagesForRange(d1,d2){
   const cal=state.meta.calendar;
@@ -947,7 +967,7 @@ async function buildExcel(){
   if(!state.meta){ alert("資料尚未載入"); return; }
   const btn=document.getElementById("xlsxBtn"); const old=btn.textContent; btn.textContent="產生中…";
   try{
-    const d2=state.latest.date;
+    const d2=xlsxAnchor();
     const P=[{name:"單日",s:d2,e:d2}].concat(
       [["本週","thisweek"],["上週","lastweek"],["本月","thismonth"],["上月","lastmonth"]]
         .map(([n,k])=>{const r=weekRange(k); return {name:n,s:r.start,e:r.end};}));
@@ -960,7 +980,8 @@ async function buildExcel(){
 
     // 機構分頁：每期間 買/賣 Top10 並排（左5 右5，壓字壓欄擠進一張直式 A4）
     function instSheet(name, side){
-      const ws=xlSheet(wb,name,true), W={}; head(ws,name+"　最近資料 "+d2); let row=3;
+      const ws=xlSheet(wb,name,true), W={}; head(ws,name+"　基準日 "+d2);
+      let row=sub(ws,2,"資料源：逐檔法人/股價（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages) continue;
         row=sub(ws,row,pl(p));
         const a=xlTable(ws,row,1,"買超",INST_MINI,p.pages[side].buy_by_amt.slice(0,10),W,8);
@@ -973,7 +994,8 @@ async function buildExcel(){
     instSheet("投信進出","trust");
 
     // 同步買賣超（同步買、同步賣 並排，擠進一張直式 A4）
-    { const ws=xlSheet(wb,"外資投信同步",true), W={}; head(ws,"外資投信同步　最近資料 "+d2); let row=3;
+    { const ws=xlSheet(wb,"外資投信同步",true), W={}; head(ws,"外資投信同步　基準日 "+d2);
+      let row=sub(ws,2,"資料源：逐檔法人（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,pl(p));
         const a=xlTable(ws,row,1,"同步買",SYNC_MINI,p.pages.sync.sync_buy.slice(0,10),W,8);
@@ -981,7 +1003,8 @@ async function buildExcel(){
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); ws.getColumn(SYNC_MINI.length+1).width=1.5; }
     // 外資投信對作（欄位同同步，並排，擠進一張直式 A4）
-    { const ws=xlSheet(wb,"外資投信對作",true), W={}; head(ws,"外資投信對作　最近資料 "+d2); let row=3;
+    { const ws=xlSheet(wb,"外資投信對作",true), W={}; head(ws,"外資投信對作　基準日 "+d2);
+      let row=sub(ws,2,"資料源：逐檔法人（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,pl(p));
         const a=xlTable(ws,row,1,"外資買·投信賣",OPP_MINI,p.pages.oppose.f_buy_t_sell.slice(0,10),W,8);
@@ -989,7 +1012,8 @@ async function buildExcel(){
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); ws.getColumn(OPP_MINI.length+1).width=1.5; }
     // ETF與大盤（Part 5：ETF市值 + 大盤資金 整合同一張；直向堆疊）
-    { const ws=xlSheet(wb,"ETF與大盤"), W={}; head(ws,"ETF與大盤　最近資料 "+d2); let row=3;
+    { const ws=xlSheet(wb,"ETF與大盤"), W={}; head(ws,"ETF與大盤　基準日 "+d2);
+      let row=sub(ws,2,"資料源　ETF/逐檔(FinMind)·"+srcAsOf("daily",d2)+"　｜　三大法人(證交所/櫃買)·"+(srcAsOf("totals",d2)||"—")+"　｜　台指期(期交所)·"+srcAsOf("futures",d2));
       const etf=P[0].pages.etf;
       row=sub(ws,row,"ETF 市值 — 股票型（依市值，末日值）");
       row=xlTable(ws,row,1,null,ETFV_MINI,etf.mktcap_stock.slice(0,10),W);
