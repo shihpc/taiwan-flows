@@ -121,6 +121,11 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 外資/投信進出、同步、對作四張：改回**左右並排（左5右5）**、`xlSheet(...,true)` fitToHeight=1 擠進一張直式 A4、`xlTable(...,fz=8)` 壓字、`xlApplyWidth(ws,W,0.72)` 壓欄。
 - **字型慣例**：`xlTable` 有數字格式（c.fmt）的儲存格用 **Arial**（FZN），其餘文字/表頭/標題用 **微軟正黑體**（FZH）；head/sub 也是微軟正黑體。
 
+### 卡片可開合（省空間給 tab）
+- 三大法人卡、台指期卡 標題加 ▾/▸ 開合鈕（`state.totOpen/futOpen`，存 `localStorage('tf_cards')`，`loadCardState/saveCardState`）。
+- 收合時只剩一行摘要（三大法人：外資淨+佔比；台指期：口數+市值），高度 130→35 / 54→29px，共省 ~120px。
+- renderTotCard / updateFutbar 各有收合分支（收合時 updateFutbar 略過比較日 fetch）。
+
 ### 各源資料日期徽章（偵測不同步）
 - 因各資料源更新時間不一，每卡/tab 顯示自己的「資料源 · MM-DD」徽章；落後於最新源者轉琥珀色標「(落後)」、tooltip 寫來源名。
 - 後端：`run_daily.py` 的 `gather_sources()` 把四源最新日寫進 `status.json.sources`：`daily`(meta.calendar 末日)、`totals`(totals.json 末日)、`futures`(futures 最新檔)、`foreign`(foreign_history.latest_date)。

@@ -107,6 +107,10 @@
   .srcdate.lag{color:#e0b341;border-color:#3a3318}
   .modes input.xdate{flex:0 0 auto;background:var(--panel);color:var(--fg);border:1px solid var(--line);
     border-radius:14px;padding:3px 9px;font-family:inherit;font-size:12px;color-scheme:dark}
+  .cardtoggle{cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;user-select:none;
+    padding:0 6px 0 0;flex:0 0 auto}
+  #totbar.collapsed,#futbar.collapsed{padding:5px 12px}
+  .csum{font-size:12px;color:var(--dim)}.csum .v{color:var(--fg);font-weight:700}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
@@ -236,7 +240,7 @@
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
-  totals:null, totSel:{period:"day",key:null}, totMkt:"tse", futCmp:"prev1", ffOpen:{},
+  totals:null, totSel:{period:"day",key:null}, totMkt:"tse", futCmp:"prev1", ffOpen:{}, totOpen:true, futOpen:true,
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
         sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap",type:"stock"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
@@ -272,12 +276,17 @@ function srcBadge(key,override){
   const newest=newestSrc(), lag=newest&&d<newest;
   return `<span class="srcdate${lag?' lag':''}" title="${SRC_LABEL[key]||''}${lag?'（落後，最新 '+newest+'）':''}">資料源 · ${d.slice(5)}${lag?' (落後)':''}</span>`;
 }
+// 卡片開合狀態（存 localStorage）
+function loadCardState(){ try{ const c=JSON.parse(localStorage.getItem("tf_cards")||"{}");
+  if("tot"in c)state.totOpen=c.tot; if("fut"in c)state.futOpen=c.fut; }catch(e){} }
+function saveCardState(){ try{ localStorage.setItem("tf_cards",JSON.stringify({tot:state.totOpen,fut:state.futOpen})); }catch(e){} }
 const sign = (v,txt) => `<span class="${v>0?'up':v<0?'down':'muted'}">${txt}</span>`;
 const chg = p => p==null?'<span class="muted">—</span>':`<span class="${p>0?'up':p<0?'down':'muted'}">${fmtPct(p)}</span>`;
 const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_blank" rel="noopener">${c}</a>`;
 
 // ---------- data ----------
 async function boot(){
+  loadCardState();
   try{
     state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
     const ts=(state.latest.generated_at||"").slice(0,16).replace("T"," ");
@@ -584,13 +593,22 @@ function renderTotCard(){
     +`<span class="k">淨</span><span class="v">${sign(s[k+"_net"],fmtYi(s[k+"_net"]))}</span>`
     +(extra||"")+`</div>`;
   const fExtra=`<span class="k">外資佔比</span><span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span>`;
+  const tgl=`<span class="cardtoggle" id="totTgl" title="開合卡片">${state.totOpen?"▾":"▸"}</span>`;
+  el.classList.toggle("collapsed", !state.totOpen);
+  if(!state.totOpen){
+    el.innerHTML=`<div class="cardwrap"><div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>${srcBadge("totals")}`
+      +`<span class="csum">外資淨 <span class="v">${sign(s.f_net,fmtYi(s.f_net))}</span> · 佔比 <span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span></span></div></div>`;
+    document.getElementById("totTgl").onclick=()=>{ state.totOpen=true; saveCardState(); renderTotCard(); };
+    return;
+  }
   el.innerHTML=`<div class="cardwrap">
-    <div class="cardhead"><span class="ttl">三大法人買賣超</span>${srcBadge("totals")}
+    <div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>${srcBadge("totals")}
       <div class="seg tmkt">${mbtn("tse","上市")}${mbtn("otc","上櫃")}${mbtn("all","合計")}</div>
       <div class="seg tsel">${btn("day","日")}${btn("week","週")}${btn("month","月")}</div>
       <select id="totSel">${opts}</select></div>
     <div class="totgrid">${trow("外資","f",fExtra)}${trow("投信","t")}${trow("自營","d")}</div>
   </div>`;
+  document.getElementById("totTgl").onclick=()=>{ state.totOpen=false; saveCardState(); renderTotCard(); };
   el.querySelectorAll(".tmkt button").forEach(b=>b.onclick=()=>{ state.totMkt=b.dataset.m; renderTotCard(); });
   el.querySelectorAll(".tsel button").forEach(b=>b.onclick=()=>{ state.totSel.period=b.dataset.p; state.totSel.key=null; renderTotCard(); });
   document.getElementById("totSel").onchange=e=>{ state.totSel.key=e.target.value; renderTotCard(); };
@@ -623,17 +641,26 @@ async function updateFutbar(){
   if(!d2 || !state.meta){ el.style.display="none"; return; }
   const cur=await fetchTxOI(d2);
   if(!cur){ el.style.display="none"; el.innerHTML=""; return; }
+  // 未平倉市值（名目）＝口數 × 加權指數 × 200（元）→億
+  const taiex=(state.totals&&state.totals.rows[d2])?state.totals.rows[d2].taiex:null;
+  const mktval = taiex!=null ? cur.lots*taiex*200/1e8 : null;
+  const futTgl=`<span class="cardtoggle" id="futTgl" title="開合卡片">${state.futOpen?"▾":"▸"}</span>`;
+  el.classList.toggle("collapsed", !state.futOpen);
+  if(!state.futOpen){
+    el.style.display="flex";
+    el.innerHTML=`<div class="cardwrap tight"><div class="cardhead">${futTgl}<span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}`
+      +`<span class="csum">${sign(cur.lots,fmtLot(cur.lots)+"口")} · 市值 <span class="v">${mktval==null?"—":sign(mktval,yiStr(mktval))}</span></span></div></div>`;
+    document.getElementById("futTgl").onclick=()=>{ state.futOpen=true; saveCardState(); updateFutbar(); };
+    return;
+  }
   const cmp=state.futCmp, ref=refDateFor(cmp,d2);
   const refOI = ref ? await fetchTxOI(ref) : null;
   const diff = refOI ? cur.lots-refOI.lots : null;
   if(modeD2()!==d2 || state.futCmp!==cmp) return;  // 期間又被切換，放棄這次渲染
   const opts=FUTCMP.map(([k,l])=>`<option value="${k}" ${k===cmp?"selected":""}>${l}</option>`).join("");
-  // 未平倉市值（名目）＝口數 × 加權指數 × 200（元）→億
-  const taiex=(state.totals&&state.totals.rows[d2])?state.totals.rows[d2].taiex:null;
-  const mktval = taiex!=null ? cur.lots*taiex*200/1e8 : null;
   el.style.display="flex";
   el.innerHTML=`<div class="cardwrap tight">
-    <div class="cardhead"><span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}
+    <div class="cardhead">${futTgl}<span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}
       <span class="k">${d2}</span><span class="k">vs</span>
       <select id="futSel">${opts}</select>
       <span class="k">${ref?ref:"無此基準"}</span></div>
@@ -644,6 +671,7 @@ async function updateFutbar(){
       ${diff!=null?`<div><span class="k">增減</span> <span class="v">${sign(diff,fmtLot(diff)+" 口")}</span></div>`:``}</div>
   </div>`;
   document.getElementById("futSel").onchange=e=>{ state.futCmp=e.target.value; updateFutbar(); };
+  document.getElementById("futTgl").onclick=()=>{ state.futOpen=false; saveCardState(); updateFutbar(); };
 }
 function render(){
   for(const k in TABLES) delete TABLES[k];  // 清掉上一輪表格註冊
