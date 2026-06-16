@@ -847,7 +847,9 @@ function jPageEtf(agg){
     f_buy_k:a.f_buy_amt,f_sell_k:a.f_sell_amt,t_buy_k:a.t_buy_amt,t_sell_k:a.t_sell_amt,d_buy_k:a.d_buy_amt,d_sell_k:a.d_sell_amt,
     ...shares(a),chg_pct:a.chg_pct});
   const mRow=a=>{const m=mc(a),fv=a.f_shares!=null?Math.round(a.f_shares*a.close):0,tv=a.t_inv!=null?Math.round(a.t_inv*a.close):0;
-    return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,...shares(a),chg_pct:a.chg_pct};};
+    const pct=v=>m?round(v/m*100,2):null;  // 市值排行佔比＝持股市值/總市值
+    return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:tv,other_value_k:m-fv-tv,
+      f_share:pct(fv),t_share:pct(tv),d_share:null,chg_pct:a.chg_pct};};
   const top=(lst,key)=>[...lst].sort((x,y)=>key(y)-key(x)).slice(0,20);
   return {stats:{all:stats(etfs),nonbond:stats(nonbond),bond:stats(bond)},
     turnover_stock:top(nonbond,a=>a.amt).map(tRow), turnover_bond:top(bond,a=>a.amt).map(tRow),
