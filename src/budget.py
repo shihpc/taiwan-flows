@@ -238,13 +238,13 @@ def page_etf(agg: dict) -> dict:
     def mktcap_row(a):
         mc = mktcap_k(a)
         f_val = round(a["f_shares"] * a["close"]) if a["f_shares"] is not None else 0
-        t_val = round(a["t_inv"] * a["close"]) if a["t_inv"] is not None else 0
         pct = lambda v: round(v / mc * 100, 2) if mc else None  # noqa: E731
-        # 市值排行的佔比＝持股市值/總市值（外資官方準；投信對 ETF 失真同持股市值；自營無來源→None）
+        # 佝比＝持股市值/總市值。外資官方準；投信對 ETF 失真、自營無來源 → 一律 None（顯「—」）。
+        # 其他＝市值−外資持股市值（含投信/自營/散戶等，因投信無法可靠拆分）。
         return {"code": a["code"], "name": a["name"], "mktcap_k": mc,
-                "f_hold_value_k": f_val, "t_hold_value_k": t_val,
-                "other_value_k": mc - f_val - t_val,
-                "f_share": pct(f_val), "t_share": pct(t_val), "d_share": None,
+                "f_hold_value_k": f_val, "t_hold_value_k": None,
+                "other_value_k": mc - f_val,
+                "f_share": pct(f_val), "t_share": None, "d_share": None,
                 "chg_pct": a["chg_pct"]}
 
     def top(lst, key):
