@@ -109,8 +109,13 @@
     border-radius:14px;padding:3px 9px;font-family:inherit;font-size:12px;color-scheme:dark}
   .cardtoggle{cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;user-select:none;
     padding:0 6px 0 0;flex:0 0 auto}
-  #totbar.collapsed,#futbar.collapsed{padding:5px 12px}
-  .csum{font-size:12px;color:var(--dim)}.csum .v{color:var(--fg);font-weight:700}
+  #totbar.collapsed,#futbar.collapsed{padding:3px 12px}
+  #totbar.collapsed .cardhead,#futbar.collapsed .cardhead{line-height:1.2}
+  #totbar.collapsed .ttl,#futbar.collapsed .ttl{font-size:12px}
+  .csum{font-size:11px;color:var(--dim)}.csum .v{color:var(--fg);font-weight:700;font-size:11px}
+  .updin{font-size:10px;color:var(--dim);font-weight:400;margin-right:8px}
+  .statshead{display:flex;align-items:center;gap:4px;margin-bottom:6px}
+  .statshead .ttl{font-size:12px;color:var(--fg);font-weight:700}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
@@ -240,7 +245,7 @@
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{},
-  totals:null, totSel:{period:"day",key:null}, totMkt:"tse", futCmp:"prev1", ffOpen:{}, totOpen:true, futOpen:true,
+  totals:null, totSel:{period:"day",key:null}, totMkt:"tse", futCmp:"prev1", ffOpen:{}, totOpen:true, futOpen:true, etfStatsOpen:true,
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
         sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap",type:"stock"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
@@ -278,8 +283,8 @@ function srcBadge(key,override){
 }
 // 卡片開合狀態（存 localStorage）
 function loadCardState(){ try{ const c=JSON.parse(localStorage.getItem("tf_cards")||"{}");
-  if("tot"in c)state.totOpen=c.tot; if("fut"in c)state.futOpen=c.fut; }catch(e){} }
-function saveCardState(){ try{ localStorage.setItem("tf_cards",JSON.stringify({tot:state.totOpen,fut:state.futOpen})); }catch(e){} }
+  if("tot"in c)state.totOpen=c.tot; if("fut"in c)state.futOpen=c.fut; if("etf"in c)state.etfStatsOpen=c.etf; }catch(e){} }
+function saveCardState(){ try{ localStorage.setItem("tf_cards",JSON.stringify({tot:state.totOpen,fut:state.futOpen,etf:state.etfStatsOpen})); }catch(e){} }
 const sign = (v,txt) => `<span class="${v>0?'up':v<0?'down':'muted'}">${txt}</span>`;
 const chg = p => p==null?'<span class="muted">—</span>':`<span class="${p>0?'up':p<0?'down':'muted'}">${fmtPct(p)}</span>`;
 const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_blank" rel="noopener">${c}</a>`;
@@ -290,7 +295,8 @@ async function boot(){
   try{
     state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
     const ts=(state.latest.generated_at||"").slice(0,16).replace("T"," ");
-    if(ts) document.getElementById("updated").textContent="更新 "+ts;
+    state.updatedTs=ts||"";
+    document.getElementById("updated").style.display="none";  // 併入資料日列
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
   await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
@@ -433,7 +439,9 @@ function renderEtf(page){
     <div class="line"><span>投信淨</span><span>${sign(g.t_amt_k,fmtYi(g.t_amt_k))}</span></div>
     <div class="line"><span>自營淨</span><span>${sign(g.d_amt_k,fmtYi(g.d_amt_k))}</span></div>
     <div class="line"><span>其他淨</span><span>${sign(g.other_amt_k,fmtYi(g.other_amt_k))}</span></div></div>`;
-  let html=`<div class="stats">${card("整體",page.stats.all)}${card("股票型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
+  const sopen = state.etfStatsOpen!==false;
+  let html=`<div class="statshead"><span class="cardtoggle" id="etfStatTgl" title="開合概況">${sopen?"▾":"▸"}</span><span class="ttl">ETF 概況</span></div>`;
+  if(sopen) html+=`<div class="stats">${card("整體",page.stats.all)}${card("股票型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
   html+=`<div class="toggles">
     <div class="seg" data-seg="rank">
       <button data-v="mktcap" class="${s.rank==="mktcap"?"active":""}">市值排行</button>
@@ -546,7 +554,8 @@ function updateDateLabel(){
     txt=`${w.start} ~ ${w.end}（${w.trading_days} 交易日）`;
   }
   const badge = state.tab==="foreignflows" ? "" : srcBadge("daily");
-  el.innerHTML=`<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
+  const upd = state.updatedTs ? `<span class="updin">更新 ${state.updatedTs}</span>` : "";
+  el.innerHTML=`${upd}<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
 }
@@ -716,6 +725,8 @@ function bindSegs(){
       render();
     });
   });
+  const est=document.getElementById("etfStatTgl");
+  if(est) est.onclick=()=>{ state.etfStatsOpen=(state.etfStatsOpen===false); saveCardState(); render(); };
 }
 
 // ---------- nav ----------

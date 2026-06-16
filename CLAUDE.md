@@ -121,6 +121,12 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 外資/投信進出、同步、對作四張：改回**左右並排（左5右5）**、`xlSheet(...,true)` fitToHeight=1 擠進一張直式 A4、`xlTable(...,fz=8)` 壓字、`xlApplyWidth(ws,W,0.72)` 壓欄。
 - **字型慣例**：`xlTable` 有數字格式（c.fmt）的儲存格用 **Arial**（FZN），其餘文字/表頭/標題用 **微軟正黑體**（FZH）；head/sub 也是微軟正黑體。
 
+### 版面精簡微調
+- 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「更新 ts｜資料日/區間｜資料源徽章」同一行（`.updin` 小灰）。
+- 收合卡字體縮小（`.csum/.csum .v` 11px、collapsed `.ttl` 12px、padding 3px、line-height 1.2）→ 收合高度 ~23px。
+- ETF 概況（整體/股票/債券三卡）可收合：`state.etfStatsOpen`（存 tf_cards.etf），`renderEtf` 加 `#etfStatTgl`，bindSegs 綁定；收合後表格 scrollbox 自動長高。
+- 右上狀態邏輯：讀 `status.json.status` — `ok`→「資料已更新 <date>」(綠)、`no_data`→「尚未開盤/非交易日」(黃)、其他→「資料異常」。反映**最近一次 pipeline 執行結果**（run_date 抓不到當日股價即 no_data），非即時盤態。
+
 ### 表格響應式高度
 - `.scrollbox` 高度改由 `fitScrollbox()` 動態設定＝`視窗高 − 表格top − 14`（下限 160px），依裝置/視窗高決定顯示筆數、超出可下拉。
 - 觸發點：render 結尾、renderTotCard/updateFutbar 結尾（卡片開合→表格上移→自動多顯示幾筆）、window resize（120ms debounce）。
