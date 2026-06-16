@@ -114,7 +114,7 @@
   #totbar.collapsed .ttl,#futbar.collapsed .ttl{font-size:12px}
   .csum{font-size:11px;color:var(--dim)}.csum .v{color:var(--fg);font-weight:700;font-size:11px}
   .updin{font-size:10px;color:var(--dim);font-weight:400;margin-right:8px}
-  .statshead{display:flex;align-items:center;gap:4px;margin-bottom:6px}
+  .statshead{display:flex;align-items:center;gap:4px 10px;margin-bottom:6px;flex-wrap:wrap}
   .statshead .ttl{font-size:12px;color:var(--fg);font-weight:700}
   .sub{color:var(--dim);font-size:11px;margin:14px 0 6px;border-left:2px solid var(--accent2);padding-left:8px}
   /* info overlay */
@@ -440,7 +440,10 @@ function renderEtf(page){
     <div class="line"><span>自營淨</span><span>${sign(g.d_amt_k,fmtYi(g.d_amt_k))}</span></div>
     <div class="line"><span>其他淨</span><span>${sign(g.other_amt_k,fmtYi(g.other_amt_k))}</span></div></div>`;
   const sopen = state.etfStatsOpen!==false;
-  let html=`<div class="statshead"><span class="cardtoggle" id="etfStatTgl" title="開合概況">${sopen?"▾":"▸"}</span><span class="ttl">ETF 概況</span></div>`;
+  const sm=(lbl,g)=>`<span class="csum">${lbl} <span class="v">${g.count}</span> 檔 · 市值 <span class="v">${fmtYi(g.mktcap_k)}</span></span>`;
+  let html=`<div class="statshead"><span class="cardtoggle" id="etfStatTgl" title="開合概況">${sopen?"▾":"▸"}</span><span class="ttl">ETF 概況</span>`
+    + (sopen?"":`${sm("整體",page.stats.all)}${sm("股票型",page.stats.nonbond)}${sm("債券型",page.stats.bond)}`)
+    + `</div>`;
   if(sopen) html+=`<div class="stats">${card("整體",page.stats.all)}${card("股票型",page.stats.nonbond)}${card("債券型",page.stats.bond)}</div>`;
   html+=`<div class="toggles">
     <div class="seg" data-seg="rank">
