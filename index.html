@@ -968,20 +968,33 @@ const xlThin={style:"thin",color:{argb:"FFCCCCCC"}};
 const xlBorder={top:xlThin,left:xlThin,bottom:xlThin,right:xlThin};
 const FZH="微軟正黑體";   // 中文/標題/表頭/文字欄
 const FZN="Arial";        // 數字欄
+// 自動欄寬：依內容顯示長度（CJK 計 2、含千分位/億/%/負號）× 字級比例 + 留白，避免 #######
+const _cjk=/[⺀-￯]/;
+function _units(s){ s=String(s); let n=0; for(const ch of s) n += _cjk.test(ch)?2:1; return n; }
+function _disp(c,v){
+  if(v===""||v==null) return "";
+  if(c.fmt){
+    if(c.fmt.includes('"億"')) return v.toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1})+"億";
+    if(c.fmt.includes('%')) return v.toFixed(c.fmt.includes('0.00')?2:1)+"%";
+    return v.toLocaleString("en-US");
+  }
+  return String(v);
+}
 function xlTable(ws,r0,c0,title,cols,rows,W,fz){
   fz=fz||10;
+  const fit=(i,s)=>{ W[c0+i]=Math.max(W[c0+i]||0, _units(s)*(fz/11)+1.8); };
   if(title!=null){ const t=ws.getCell(r0,c0); t.value=title; t.font={name:FZH,bold:true,size:fz,color:{argb:"FF0B6E9E"}}; r0++; }
   const hr=r0;
   cols.forEach((c,i)=>{ const cell=ws.getCell(hr,c0+i);
     cell.value=c.h; cell.font={name:FZH,bold:true,size:fz,color:{argb:"FFFFFFFF"}};
     cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF1F4E79"}};
     cell.alignment={horizontal:c.left?"left":"right"}; cell.border=xlBorder;
-    W[c0+i]=Math.max(W[c0+i]||0,c.w); });
+    fit(i,c.h); });
   (rows||[]).forEach((r,ri)=>{ cols.forEach((c,i)=>{ const cell=ws.getCell(hr+1+ri,c0+i);
     const v=c.v(r); cell.value=(v===""||v==null)?null:v; if(c.fmt) cell.numFmt=c.fmt;
     cell.font={name:c.fmt?FZN:FZH,size:fz};   // 有數字格式→Arial，其餘→微軟正黑體
     cell.alignment={horizontal:c.left?"left":"right"}; cell.border=xlBorder;
-    W[c0+i]=Math.max(W[c0+i]||0,c.w); }); });
+    fit(i,_disp(c,v)); }); });
   return hr+1+(rows?rows.length:0);
 }
 function xlApplyWidth(ws,W,scale){ scale=scale||1; for(const k in W) ws.getColumn(+k).width=Math.round(W[k]*scale*10)/10; }
