@@ -464,7 +464,7 @@ function renderEtf(page){
     {h:"外資持股市值",f:r=>fmtYi(r.f_hold_value_k)},
     {h:"投信持股市值",f:r=>fmtYi(r.t_hold_value_k)},
     {h:"其他",f:r=>fmtYi(r.other_value_k)},
-    {h:"外資佔比",f:r=>fmtShare(r.f_share)},{h:"投信佔比",f:r=>fmtShare(r.t_share)},{h:"自營佔比",f:r=>fmtShare(r.d_share)},
+    {h:"外資佔比",f:r=>fmtShare(r.f_share)},{h:"投信佔比",f:r=>fmtShare(r.t_share)},
     {h:"漲跌",f:r=>chg(r.chg_pct)}];
   const cols = s.rank==="turnover"?turnoverCols:mktcapCols;
   const key = (s.rank==="turnover"?"turnover_":"mktcap_") + (s.type==="bond"?"bond":"stock");
