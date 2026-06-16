@@ -128,9 +128,8 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 右上狀態邏輯：讀 `status.json.status` — `ok`→「資料已更新 <date>」(綠)、`no_data`→「尚未開盤/非交易日」(黃)、其他→「資料異常」。反映**最近一次 pipeline 執行結果**（run_date 抓不到當日股價即 no_data），非即時盤態。
 
 ### ETF 佔比語意（市值排行 vs 成交金額排行）
-- **市值排行**的外資/投信/自營佔比＝**持股市值/總市值**（`mktcap_row` 用 `pct(f_val)/pct(t_val)`；外資準＝官方持股比、投信對 ETF 沿用 t_inv 失真、**自營無持股來源→d_share=None 顯「—」**）。
-- **成交金額排行**的佔比＝**成交量參與率**＝(買張+賣張)/(2×成交張)（`turnover_row` 用 `shares()`）。兩表語意不同、勿混用。
-- 已知資料限制：ETF 投信持股市值/佔比因 baseline 無 ETF 種子而失真；自營持股無來源。
+- **市值排行**的佔比＝**持股市值/總市值**。**外資**＝官方持股比（準）；**投信、自營對 ETF 無可靠絕對來源**（投信 t_inv 缺 ETF baseline 種子而失真、自營無來源）→ `mktcap_row` 的 `t_hold_value_k/t_share/d_share` 一律 None（顯「—」），其他＝市值−外資持股市值。
+- **成交金額排行**的佔比＝**成交量參與率**＝(買張+賣張)/(2×成交張)（`turnover_row` 用 `shares()`，三法人皆有值）。兩表語意不同、勿混用。
 
 ### 表格響應式高度
 - `.scrollbox` 高度改由 `fitScrollbox()` 動態設定＝`視窗高 − 表格top − 14`（下限 160px），依裝置/視窗高決定顯示筆數、超出可下拉。
