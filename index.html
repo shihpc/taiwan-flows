@@ -522,7 +522,7 @@ function renderForeignFlows(){
     <tr><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th><th>買</th><th>賣</th><th>淨</th></tr></thead>`;
   return `<div class="muted" style="font-size:11px;margin-bottom:6px">外資買賣超（上市＝證交所 BFI82U、上櫃＝櫃買，官方口徑）。單位：億元；「淨」＝買賣差額。年度累計點 ＋ 展開月份。${srcBadge("foreign")}</div>`
     + note
-    + `<div class="tablewrap" style="max-height:none"><table>${thead}<tbody>${body}</tbody></table></div>`;
+    + `<div class="tablewrap scrollbox"><table>${thead}<tbody>${body}</tbody></table></div>`;
 }
 function bindFfToggles(){
   document.querySelectorAll(".fftoggle").forEach(t=>t.onclick=e=>{
@@ -599,7 +599,7 @@ function renderTotCard(){
     el.innerHTML=`<div class="cardwrap"><div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>${srcBadge("totals")}`
       +`<span class="csum">外資淨 <span class="v">${sign(s.f_net,fmtYi(s.f_net))}</span> · 佔比 <span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span></span></div></div>`;
     document.getElementById("totTgl").onclick=()=>{ state.totOpen=true; saveCardState(); renderTotCard(); };
-    return;
+    fitScrollbox(); return;
   }
   el.innerHTML=`<div class="cardwrap">
     <div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>${srcBadge("totals")}
@@ -612,6 +612,7 @@ function renderTotCard(){
   el.querySelectorAll(".tmkt button").forEach(b=>b.onclick=()=>{ state.totMkt=b.dataset.m; renderTotCard(); });
   el.querySelectorAll(".tsel button").forEach(b=>b.onclick=()=>{ state.totSel.period=b.dataset.p; state.totSel.key=null; renderTotCard(); });
   document.getElementById("totSel").onchange=e=>{ state.totSel.key=e.target.value; renderTotCard(); };
+  fitScrollbox();
 }
 // ----- 台指期外資未平倉卡 + 比較日選項（item 2）-----
 const FUTCMP=[["prev1","單日(前一日)"],["d5","5日前"],["d10","10日前"],["d20","20日前"],["d65","65日前"],
@@ -651,7 +652,7 @@ async function updateFutbar(){
     el.innerHTML=`<div class="cardwrap tight"><div class="cardhead">${futTgl}<span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}`
       +`<span class="csum">${sign(cur.lots,fmtLot(cur.lots)+"口")} · 市值 <span class="v">${mktval==null?"—":sign(mktval,yiStr(mktval))}</span></span></div></div>`;
     document.getElementById("futTgl").onclick=()=>{ state.futOpen=true; saveCardState(); updateFutbar(); };
-    return;
+    fitScrollbox(); return;
   }
   const cmp=state.futCmp, ref=refDateFor(cmp,d2);
   const refOI = ref ? await fetchTxOI(ref) : null;
@@ -672,6 +673,14 @@ async function updateFutbar(){
   </div>`;
   document.getElementById("futSel").onchange=e=>{ state.futCmp=e.target.value; updateFutbar(); };
   document.getElementById("futTgl").onclick=()=>{ state.futOpen=false; saveCardState(); updateFutbar(); };
+  fitScrollbox();
+}
+// 響應式表格高度：依視窗可用高度撐滿 scrollbox（多顯示幾筆、超出可下拉）
+function fitScrollbox(){
+  document.querySelectorAll("#main .scrollbox").forEach(box=>{
+    const top=box.getBoundingClientRect().top;
+    box.style.maxHeight=Math.max(160, Math.floor(window.innerHeight-top-14))+"px";
+  });
 }
 function render(){
   for(const k in TABLES) delete TABLES[k];  // 清掉上一輪表格註冊
@@ -681,7 +690,7 @@ function render(){
   if(state.tab==="foreignflows"){
     updateFutbar();   // 比照其他 tab 呈現台指期外資未平倉卡
     document.getElementById("main").innerHTML=renderForeignFlows();
-    bindSegs(); bindFfToggles(); return;
+    bindSegs(); bindFfToggles(); fitScrollbox(); return;
   }
   if(state.mode==="custom" && !state.customPages){ updateFutbar(); renderPicker(); return; }
   const pages = currentPages();
@@ -694,7 +703,7 @@ function render(){
   else if(state.tab==="oppose") html+=renderOppose(pages.oppose);
   else if(state.tab==="etf") html+=renderEtf(pages.etf);
   main.innerHTML = html;
-  bindSegs();
+  bindSegs(); fitScrollbox();
 }
 function bindSegs(){
   document.querySelectorAll(".seg[data-seg]").forEach(seg=>{
@@ -711,6 +720,7 @@ function bindSegs(){
 
 // ---------- nav ----------
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{ state.tab=t.dataset.tab; render(); });
+{ let rz; window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(fitScrollbox,120); }); }
 document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
   const mode=m.dataset.mode;
   state.mode=mode;
