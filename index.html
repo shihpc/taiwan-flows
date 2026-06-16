@@ -305,14 +305,10 @@ async function boot(){
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
   try{ state.totals = await (await fetch("data/totals.json",{cache:"no-cache"})).json(); }catch(e){ state.totals=null; }
   try{ state.foreignHist = await (await fetch("data/foreign_history.json",{cache:"no-cache"})).json(); }catch(e){ state.foreignHist=null; }
-  try{
-    const s = await (await fetch("data/status.json",{cache:"no-cache"})).json();
-    state.status = s;
-    const el = document.getElementById("status");
-    if(s.status==="ok"){ el.textContent="資料已更新 "+s.date; el.className="status ok"; }
-    else if(s.status==="no_data"){ el.textContent="尚未開盤/非交易日"; el.className="status nodata"; }
-    else { el.textContent="資料異常"; el.className="status nodata"; }
-  }catch(e){ document.getElementById("status").style.display="none"; }
+  try{ state.status = await (await fetch("data/status.json",{cache:"no-cache"})).json(); }catch(e){ state.status=null; }
+  { const el=document.getElementById("status");  // 右上角顯示更新時間
+    if(state.updatedTs){ el.textContent="更新 "+state.updatedTs; el.className="status"+(state.status&&state.status.status==="ok"?" ok":""); }
+    else el.style.display="none"; }
   renderTotCard();
   render();
 }
@@ -558,8 +554,7 @@ function updateDateLabel(){
     txt=`${w.start} ~ ${w.end}（${w.trading_days} 交易日）`;
   }
   const badge = state.tab==="foreignflows" ? "" : srcBadge("daily");
-  const upd = state.updatedTs ? `<span class="updin">更新 ${state.updatedTs}</span>` : "";
-  el.innerHTML=`${upd}<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
+  el.innerHTML=`<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
 }
