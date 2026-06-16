@@ -952,13 +952,13 @@ const mP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:7});             //
 const mS=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:7});             // 佔比%
 // 緊湊欄（四張並排表專用：窄欄+小字，擠進一張 A4 又能完整顯示內容）
 const cN=(h,k,w)=>({h,v:r=>r[k]==null?"":r[k],w,left:true});
-const cA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:9});
-const cAm=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:9});
-const cL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:9});
-const cP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:6});
-const INST_MINI=[cN("代號","code",6),cN("名稱","name",12),cA("買賣超","net_amt_k"),cL("張數","net_lots"),
+const cA=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/1e5,fmt:'#,##0.0"億"',w:11});
+const cAm=(h,k)=>({h,v:r=>r[k]==null?null:r[k]/100,fmt:'#,##0.0"億"',w:11});
+const cL=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'#,##0',w:11});
+const cP=(h,k)=>({h,v:r=>r[k]==null?null:r[k],fmt:'0.0"%"',w:7});
+const INST_MINI=[cN("代號","code",7),cN("名稱","name",14),cA("買賣超","net_amt_k"),cL("張數","net_lots"),
   cL("持股張","hold_lots"),cAm("持股市值","hold_value_m"),cP("漲跌","chg_pct")];
-const SYNC_MINI=[cN("代號","code",6),cN("名稱","name",12),cA("投信金額","t_amt_k"),cL("投信張","t_net"),
+const SYNC_MINI=[cN("代號","code",7),cN("名稱","name",14),cA("投信金額","t_amt_k"),cL("投信張","t_net"),
   cA("外資金額","f_amt_k"),cL("外資張","f_net"),cP("漲跌","chg_pct")];
 const OPP_MINI=SYNC_MINI;  // 對作工作表欄位與同步一致
 const ETFV_MINI=[mT("代號","code"),mT("名稱","name"),mA("市值","mktcap_k"),
@@ -1042,8 +1042,8 @@ async function buildExcel(){
       let row=sub(ws,2,"資料源：逐檔法人/股價（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages) continue;
         row=sub(ws,row,pl(p));
-        const a=xlTable(ws,row,1,"買超",INST_MINI,p.pages[side].buy_by_amt.slice(0,10),W,9);
-        const b=xlTable(ws,row,RS(INST_MINI),"賣超",INST_MINI,p.pages[side].sell_by_amt.slice(0,10),W,9);
+        const a=xlTable(ws,row,1,"買超",INST_MINI,p.pages[side].buy_by_amt.slice(0,10),W,11);
+        const b=xlTable(ws,row,RS(INST_MINI),"賣超",INST_MINI,p.pages[side].sell_by_amt.slice(0,10),W,11);
         row=Math.max(a,b)+1;
       }
       xlApplyWidth(ws,W); ws.getColumn(INST_MINI.length+1).width=1.5;  // 數字欄足寬避免#####、間隔欄壓窄
@@ -1056,8 +1056,8 @@ async function buildExcel(){
       let row=sub(ws,2,"資料源：逐檔法人（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,pl(p));
-        const a=xlTable(ws,row,1,"同步買",SYNC_MINI,p.pages.sync.sync_buy.slice(0,10),W,9);
-        const b=xlTable(ws,row,RS(SYNC_MINI),"同步賣",SYNC_MINI,p.pages.sync.sync_sell.slice(0,10),W,9);
+        const a=xlTable(ws,row,1,"同步買",SYNC_MINI,p.pages.sync.sync_buy.slice(0,10),W,11);
+        const b=xlTable(ws,row,RS(SYNC_MINI),"同步賣",SYNC_MINI,p.pages.sync.sync_sell.slice(0,10),W,11);
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); ws.getColumn(SYNC_MINI.length+1).width=1.5; }
     // 外資投信對作（欄位同同步，並排，擠進一張直式 A4）
@@ -1065,8 +1065,8 @@ async function buildExcel(){
       let row=sub(ws,2,"資料源：逐檔法人（FinMind）· "+srcAsOf("daily",d2));
       for(const p of P){ if(!p.pages)continue;
         row=sub(ws,row,pl(p));
-        const a=xlTable(ws,row,1,"外資買·投信賣",OPP_MINI,p.pages.oppose.f_buy_t_sell.slice(0,10),W,9);
-        const b=xlTable(ws,row,RS(OPP_MINI),"外資賣·投信買",OPP_MINI,p.pages.oppose.f_sell_t_buy.slice(0,10),W,9);
+        const a=xlTable(ws,row,1,"外資買·投信賣",OPP_MINI,p.pages.oppose.f_buy_t_sell.slice(0,10),W,11);
+        const b=xlTable(ws,row,RS(OPP_MINI),"外資賣·投信買",OPP_MINI,p.pages.oppose.f_sell_t_buy.slice(0,10),W,11);
         row=Math.max(a,b)+1; }
       xlApplyWidth(ws,W); ws.getColumn(OPP_MINI.length+1).width=1.5; }
     // ETF與大盤（Part 5：ETF市值 + 大盤資金 整合同一張；直向堆疊）
