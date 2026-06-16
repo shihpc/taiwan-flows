@@ -113,6 +113,7 @@
   #totbar.collapsed .cardhead,#futbar.collapsed .cardhead{line-height:1.2}
   #totbar.collapsed .ttl,#futbar.collapsed .ttl{font-size:12px}
   .csum{font-size:11px;color:var(--dim)}.csum .v{color:var(--fg);font-weight:700;font-size:11px}
+  .csub{padding-left:20px;line-height:1.1;margin-top:1px}.csub .srcdate{margin-left:0}
   .updin{font-size:10px;color:var(--dim);font-weight:400;margin-right:8px}
   .statshead{display:flex;align-items:center;gap:4px 10px;margin-bottom:6px;flex-wrap:wrap}
   .statshead .ttl{font-size:12px;color:var(--fg);font-weight:700}
@@ -608,8 +609,9 @@ function renderTotCard(){
   const tgl=`<span class="cardtoggle" id="totTgl" title="開合卡片">${state.totOpen?"▾":"▸"}</span>`;
   el.classList.toggle("collapsed", !state.totOpen);
   if(!state.totOpen){
-    el.innerHTML=`<div class="cardwrap"><div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>${srcBadge("totals")}`
-      +`<span class="csum">外資淨 <span class="v">${sign(s.f_net,fmtYi(s.f_net))}</span> · 佔比 <span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span></span></div></div>`;
+    el.innerHTML=`<div class="cardwrap"><div class="cardhead">${tgl}<span class="ttl">三大法人買賣超</span>`
+      +`<span class="csum">外資淨 <span class="v">${sign(s.f_net,fmtYi(s.f_net))}</span> · 佔比 <span class="v" style="color:var(--accent)">${fmtShare(fShare)}</span></span></div>`
+      +`<div class="csub">${srcBadge("totals")}</div></div>`;
     document.getElementById("totTgl").onclick=()=>{ state.totOpen=true; saveCardState(); renderTotCard(); };
     fitScrollbox(); return;
   }
@@ -661,8 +663,9 @@ async function updateFutbar(){
   el.classList.toggle("collapsed", !state.futOpen);
   if(!state.futOpen){
     el.style.display="flex";
-    el.innerHTML=`<div class="cardwrap tight"><div class="cardhead">${futTgl}<span class="ttl">台指期 外資未平倉</span>${srcBadge("futures",srcDate("futures")||d2)}`
-      +`<span class="csum">${sign(cur.lots,fmtLot(cur.lots)+"口")} · 市值 <span class="v">${mktval==null?"—":sign(mktval,yiStr(mktval))}</span></span></div></div>`;
+    el.innerHTML=`<div class="cardwrap tight"><div class="cardhead">${futTgl}<span class="ttl">台指期 外資未平倉</span>`
+      +`<span class="csum">${sign(cur.lots,fmtLot(cur.lots)+"口")} · 市值 <span class="v">${mktval==null?"—":sign(mktval,yiStr(mktval))}</span></span></div>`
+      +`<div class="csub">${srcBadge("futures",srcDate("futures")||d2)}</div></div>`;
     document.getElementById("futTgl").onclick=()=>{ state.futOpen=true; saveCardState(); updateFutbar(); };
     fitScrollbox(); return;
   }
