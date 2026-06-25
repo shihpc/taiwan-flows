@@ -60,9 +60,15 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
           if git diff --cached --quiet; then
-            echo "無變更，略過 commit"
-          else
-            d=$(python -c "import json;print(json.load(open('data/status.json'))['date'])")
-            git commit -m "data: $d daily flows [skip ci]"
-            git push
+            echo "無變更，略過 commit"; exit 0
           fi
+          d=$(python -c "import json;print(json.load(open('data/status.json'))['date'])")
+          git commit -m "data: $d daily flows [skip ci]"
+          # push 前先 rebase 遠端最新（避免期間有前端等 commit 推入而被拒）；衝突重試
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" \
+              && git push origin "HEAD:${GITHUB_REF_NAME}" \
+              && { echo "已推送（嘗試 $i）"; exit 0; }
+            echo "遠端有更新或推送衝突，rebase 後重試 $i…"; sleep 5
+          done
+          echo "::error::push 重試 5 次仍失敗"; exit 1
