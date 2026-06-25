@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # 完整歷史，push 前 rebase 才穩（淺層 clone 會讓 rebase 出錯）
 
       - uses: actions/setup-python@v6
         with:
