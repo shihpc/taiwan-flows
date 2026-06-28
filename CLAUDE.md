@@ -18,9 +18,10 @@
   - Excel：**auto-fit 自動欄寬**（消除 #######）、四張並排表字體 11、可選**匯出基準日**、各表標**資料源日期**、ETF市值表移投信/自營佔比。
   - 前端：三大法人卡/台指期卡/ETF概況**可開合**（localStorage）、表格**響應式高度**、各卡/tab**資料源日期徽章**（偵測落後）、右上角改顯示**更新時間**、網頁**「🔄 更新資料」鈕**（PAT 觸發 workflow_dispatch）。
   - **ETF 佔比語意**：市值排行＝持股市值/總市值（外資準、投信/自營對ETF無來源顯「—」、自營佔比欄已移除）；成交金額排行＝成交量參與率(買+賣張)/(2×成交張)。
-- **FinMind 現況**：額度查詢顯示 limit=600（疑似 Sponsor 到期、降免費層；使用者考慮續約）。**但歷史/法人資料免費層仍抓得到**；`TaiwanStockPrice` 對**非交易日**（如週末）查詢會回 **HTTP 400 → fm_get 回 None → 報 error**，所以週末手動觸發更新會變紅（屬正常、非 bug）。
+- **FinMind 現況**：Sponsor **已續約/恢復正常**（2026-06-28，產業鏈等 Sponsor 級資料集可正常抓）。`TaiwanStockPrice` 對**非交易日**（如週末）查詢會回 **HTTP 400 → fm_get 回 None → 報 error**，所以週末手動觸發更新會變紅（屬正常、非 bug）。
+- **⚠ 2026-06-26 daily 價格事故（已修）**：6/26 排程跑時 FinMind `TaiwanStockPrice` 尚未更新完成，**922/2687 檔（高價權值股居多，如 2330 存 227 vs 正確 2340）價格被寫成暫定/舊值**，但法人張數正確 → 衍生金額/成交值/市值/Excel/類股資金流全錯。**偵測**：daily.close 與權威 `TaiwanStockPrice` 逐檔比對；**補救**：`python src/pipeline.py --date 2026-06-26` 重抓（現已正確）→ 重跑 budget/sectors。**教訓→已實作**：`src/healthcheck.py` 逐檔比對 daily.close vs 權威源，`run_daily` 在 pipeline 後自動跑、結果寫進 `status.json.healthcheck`（severity: ok/warn/critical + 最差名單）。critical 時 log 告警並建議 `healthcheck.py --date D --fix` 重抓（**排程不自動重抓**——6/26 證明即時重抓多半仍未 settle，需數小時後 FinMind settle 才有效）。前端可讀 `status.json.healthcheck.severity` 顯示資料品質徽章。已對全期間 73 天掃描：僅 6/26 中招、已修，其餘全相符。
 - **待辦/暫緩**：
-  - 非交易日手動觸發優雅化（`fm_get` 把 400 視為無資料→no_data，避免紅）——使用者請暫緩，先處理 Sponsor。
+  - 非交易日手動觸發優雅化（`fm_get` 把 400 視為無資料→no_data，避免紅）——使用者請暫緩。
   - ETF 投信/自營持股無絕對來源（已顯「—」）。
   - 讓同事免密碼更新：三方案（Cloudflare Worker 代理／限定版 fine-grained token／GitHub Issue 觸發），尚未實作。
 
@@ -56,7 +57,10 @@ GitHub Pages
 | `python src/foreign_backfill.py` | 一次性回補上櫃外資逐日（TPEx Daily）→ data/_otc_daily.json（2024→2026-03，已跑完 525 天） |
 | `python src/foreign_flows.py` | 重算 foreign_history.json（外資買賣超 tab：FinMind 上市 + _otc_daily/totals 上櫃，月/年聚合） |
 | `python src/rebuild_daily.py` | daily schema 變更後重抓歷史（如新增 f/t/d buy/sell 欄；升序保庫存鏈） |
-| `python src/run_daily.py` | 排程入口：pipeline + budget + foreign_flows + status.json（Actions 用） |
+| `python src/sectors.py --build-chain` | (重)抓產業鏈 → `data/industry_chain.json`（snapshot，變動慢、偶爾跑） |
+| `python src/sectors.py` | 類股資金流：讀 daily+meta+chain → `sector_latest.json`/`sector_ranges.json` |
+| `python src/healthcheck.py [--date D] [--fix]` | daily.close vs 權威源逐檔比對；`--fix` 在 critical 時重抓該日 pipeline |
+| `python src/run_daily.py` | 排程入口：pipeline + **healthcheck** + budget + foreign_flows + **sectors** + status.json（Actions 用） |
 
 每日排程 `.github/workflows/daily.yml`：**13:00 UTC（21:00 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00。）
 
@@ -92,6 +96,19 @@ GitHub Pages
 - **資料**：`data/foreign_history.json`＝`{latest_date, monthly:{"YYYY-MM":{tse:{buy_k,sell_k,net_k},otc:{...}|null}}, daily:{近30交易日}}`（千元）。年總/本週/上週/近5日由前端 `renderForeignFlows()` 聚合，合計＝tse+otc，OTC佔比＝OTC總量÷合計總量。
 - **資料源決策（重要）**：**棄用 CMoney 附件**——附件 2026 月值與官方 TWSE 差 ~3 倍且 net 正負相反（附件像更早年份的真實規模；本資料集 2026 市場本身放大 ~2.3×）。改用**官方**：上市＝FinMind `TaiwanStockTotalInstitutionalInvestors`（外資＝Foreign_Investor+Foreign_Dealer_Self，源自證交所；淨額與官方 BFI82U 65 天僅 2 天差、最大 21 億；近 65 天再用 totals.json 官方覆蓋）；上櫃＝TPEx Daily 逐日回補（`_otc_daily.json`，2024-01→2026-03 共 525 天）+ totals.json 近期。**TWSE BFI82U 只支援 type=day**（month 回 HTML、year 回無資料）；**TPEx type=Monthly 忽略 date 只回當月**——所以歷史只能逐日。OTC佔比 13-18%，與附件歷史一致（方法學交叉驗證）。
 - **前端**：tab=`foreignflows`，獨立歷史表（凍結「期間」欄 `.flbl` 118px、年列 `.yrow`、分節列 `.srow`），不吃 mode/區間。當月列標「N月（截至 MM/DD）」。Excel 多一張「外資買賣超」工作表（A3 橫向，`xlSheet(wb,name,{a3:true,land:true})`）。
+
+## 類股資金流（2026-06-28 新增，後端＋前端完成）
+
+- **目的**：在現有逐檔法人買賣超上加「分類維度」，看資金流向哪類股。兩種分類法 × 四法人別。
+- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest.json`(單日)/`sector_ranges.json`(r5/10/20/65)，**custom/本週/本月/上週/上月暫不支援**（顯示提示；未來可鏡像 `runCustomRange` 前端聚合）。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。已用 06-26 驗證 exch/chain 排序、drill-down、1d/r5、法人別切換皆正常。
+- **分類法**：`exchange`（交易所產業別，來自 `meta.stocks[code].industry`，**互斥可加總**）/ `chain`（產業鏈 `industry`，來自 `industry_chain.json`，**多對多**）。
+- **法人別**：`total`（=f+t+d）/ `foreign` / `trust` / `dealer`。
+- **`src/sectors.py`**：**重用 `budget.load_daily`+`budget.aggregate`**（不重抓、不重算流量，口徑同專案：張＋千元）；逐檔歸戶後輸出 `data/sector_latest.json`（單日）、`data/sector_ranges.json`（r5/10/20/65）。結構：`classifications.{exchange|chain}.investors.{total|foreign|trust|dealer}=[{sector,net_amt_k,net_lots,n,n_buy,n_sell}]` + `stocks:[逐檔流量列含 exch/chain 標籤]`（前端點類股→filter stocks 排序個股）。
+- **`industry_chain.json`**：`--build-chain` 產出，`map: code→{i:[產業],s:[次產業]}`（2339 檔/47 產業/258KB）。變動慢，不進每日排程、偶爾手動重抓即可。
+- **口徑雷（前端徽章務必標）**：
+  - chain **多對多**：一檔掛多節點（平均 1.65、最多 21），各節點加總**會重疊、≠大盤、不可讀成市佔**（主題曝險）。**歸戶時要對「產業」去重**（一檔在同產業底下有多個次產業時，勿因 sub_industry 重複計入該產業——否則半導體會從 ~−795 億膨脹成 ~−2700 億）。
+  - chain 僅含產業鏈有分類個股（~1940/2328），**不含 ETF/權證**（與 ETF 頁口徑不同）。
+- **size**：sector_ranges.json ~2.5MB（逐檔表 ×5 窗）。若 Pages 載入嫌大，可改只存單日逐檔表、區間 drill-down 改前端聚合（鏡像 `runCustomRange`）。
 
 ## 規格後的演進（規格書未涵蓋、已實作）
 

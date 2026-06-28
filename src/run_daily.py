@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pipeline import run_date  # noqa: E402
 import budget  # noqa: E402
 import foreign_flows  # noqa: E402
+import sectors  # noqa: E402
+import healthcheck  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("run_daily")
@@ -63,12 +65,14 @@ def gather_sources() -> dict:
     return src
 
 
-def write_status(date: str, status: str, note: str = "") -> None:
+def write_status(date: str, status: str, note: str = "", healthcheck: dict | None = None) -> None:
+    payload = {"date": date, "status": status, "note": note,
+               "sources": gather_sources(),
+               "checked_at": datetime.now(TPE).isoformat()}
+    if healthcheck is not None:
+        payload["healthcheck"] = healthcheck  # daily 收盤價 vs 權威源（severity: ok/warn/critical）
     STATUS_PATH.write_text(
-        json.dumps({"date": date, "status": status, "note": note,
-                    "sources": gather_sources(),
-                    "checked_at": datetime.now(TPE).isoformat()},
-                   ensure_ascii=False, separators=(",", ":")),
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
 
 
@@ -91,6 +95,21 @@ def main() -> None:
         write_status(d, "no_data", "非交易日或資料尚未更新")
         return  # exit 0
 
+    # 收盤價健檢：daily.close vs 權威源（偵測「抓到未 settle 價格」事故）— 非致命，僅標警示
+    hc = None
+    try:
+        hc = healthcheck.check(d)
+        sev = hc.get("severity")
+        if sev == "critical":
+            logger.error(f"⚠ 價格健檢 CRITICAL：{hc.get('mismatch')} 檔不符（{hc.get('mismatch_pct')}%）"
+                         f"，疑似 FinMind 未 settle；建議稍後 `healthcheck.py --date {d} --fix` 重抓")
+        elif sev == "warn":
+            logger.warning(f"價格健檢 warn：{hc.get('mismatch')} 檔零星不符")
+        else:
+            logger.info(f"價格健檢 {sev}")
+    except Exception as e:
+        logger.warning(f"價格健檢失敗（略過）：{e}")
+
     logger.info("重算 latest.json + latest_ranges.json …")
     argv = sys.argv
     sys.argv = [argv[0]]  # 隔離 argv，避免 budget argparse 吃到 --date
@@ -111,7 +130,19 @@ def main() -> None:
     except Exception as e:
         logger.warning(f"foreign_flows 失敗（略過）：{e}")
 
-    write_status(d, "ok", "")
+    # 類股資金流（交易所產業別 / 產業鏈）— 非致命；讀現成 daily，不再打 FinMind
+    try:
+        logger.info("重算 sector_latest.json + sector_ranges.json …")
+        argv = sys.argv
+        sys.argv = [argv[0]]
+        try:
+            sectors.main()
+        finally:
+            sys.argv = argv
+    except Exception as e:
+        logger.warning(f"sectors 失敗（略過）：{e}")
+
+    write_status(d, "ok", "", healthcheck=hc)
     logger.info(f"=== {d} 完成 ===")
 
 
