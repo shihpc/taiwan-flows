@@ -113,9 +113,10 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
         elif docs[d1].get(code) and docs[d1][code]["close"] is not None:
             base_close = float(docs[d1][code]["close"])
         chg = round((close2 / base_close - 1) * 100, 2) if base_close else 0.0
-        # 乖離月線%
+        # 乖離月線%（均價為 0，如長期未成交股，給 None 避免除以零崩潰）
         cs = close_series([d for d in dates if d <= d2], docs, code)[-MA_PERIOD:]
-        bias = round((close2 / (sum(cs) / len(cs)) - 1) * 100, 2) if cs else None
+        ma = (sum(cs) / len(cs)) if cs else 0
+        bias = round((close2 / ma - 1) * 100, 2) if ma else None
 
         issued = info.get("issued_lots")
         if issued is not None and (not isinstance(issued, (int, float)) or math.isnan(issued)):

@@ -800,7 +800,8 @@ function aggregateRange(rangeDates, docs, meta, prevDate, ma20dates){
     const chg= base? round(c2/base*100-100,2):0;
     let cs=[]; for(const d of ma20dates){ const row=docs[d]&&docs[d][code]; if(row&&row.close!=null) cs.push(row.close); }
     cs=cs.slice(-20);
-    const bias= cs.length? round(c2/(cs.reduce((a,b)=>a+b,0)/cs.length)*100-100,2):null;
+    const ma= cs.length? cs.reduce((a,b)=>a+b,0)/cs.length : 0;
+    const bias= ma? round(c2/ma*100-100,2):null;  // 均價0→null，避免 Infinity
     const info=stocks[code];
     let issued=info.issued_lots; if(issued!=null && (typeof issued!=="number"||isNaN(issued))) issued=null;
     agg[code]={code,name:info.name,is_etf:info.is_etf,industry:info.industry,issued_lots:issued,
