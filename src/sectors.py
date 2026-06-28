@@ -108,9 +108,15 @@ def load_chain_map() -> dict[str, list[str]]:
 # 逐檔流量表（drill-down 用）＋ 類股摘要
 # ════════════════════════════════════════════════════════════════
 
+# 交易所產業別命名正規化：櫃買兩個「上櫃ETF」分類字串（舊長名/新短名）合併
+EXCH_ALIAS = {"上櫃指數股票型基金(ETF)": "上櫃ETF"}
+
+
 def _exch(industry) -> str:
     s = str(industry).strip()
-    return s if s and s.lower() != "nan" else UNCLASSIFIED
+    if not s or s.lower() == "nan":
+        return UNCLASSIFIED
+    return EXCH_ALIAS.get(s, s)
 
 
 def stock_rows(agg: dict, chain_map: dict[str, list[str]]) -> list[dict]:

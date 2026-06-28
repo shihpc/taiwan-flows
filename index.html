@@ -516,6 +516,9 @@ const INV_SEG=[["total","三大法人"],["foreign","外資"],["trust","投信"],
 const INV_LABEL={total:"三大法人",foreign:"外資",trust:"投信",dealer:"自營"};
 const INV_FIELD={total:["tot_net","tot_amt"],foreign:["f_net","f_amt"],trust:["t_net","t_amt"],dealer:["d_net","d_amt"]};
 const fmtNum = v => (v==null?"—":v.toLocaleString("en-US"));
+// 交易所產業別命名正規化（與後端 sectors.py EXCH_ALIAS 一致）：合併兩個上櫃ETF分類字串
+const EXCH_ALIAS={"上櫃指數股票型基金(ETF)":"上櫃ETF"};
+const exchName = ind => { const s=ind&&ind!=="nan"?ind:"其他/未分類"; return EXCH_ALIAS[s]||s; };
 
 function renderSectors(tab){
   const classify = tab==="exch" ? "exchange" : "chain";
@@ -592,7 +595,7 @@ function jPageSectors(agg, chainMap){
     if(f_net===0&&t_net===0&&d_net===0&&f_amt===0&&t_amt===0&&d_amt===0) continue;
     const cm=chainMap[code];
     stocks.push({code,name:a.name,is_etf:a.is_etf,
-      exch:(a.industry&&a.industry!=="nan")?a.industry:"其他/未分類", chain:cm?cm.i:[],
+      exch:exchName(a.industry), chain:cm?cm.i:[],
       close:a.close,chg_pct:a.chg_pct,f_net,f_amt,t_net,t_amt,d_net,d_amt,
       tot_net:round(f_net+t_net+d_net,1),tot_amt:Math.round(f_amt+t_amt+d_amt)});
   }
