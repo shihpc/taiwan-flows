@@ -71,12 +71,15 @@ def build_chain_snapshot() -> dict:
     cmap: dict[str, dict] = {}
     for _, r in df.iterrows():
         code = r["stock_id"]
-        e = cmap.setdefault(code, {"i": [], "s": []})
+        e = cmap.setdefault(code, {"i": [], "s": [], "p": []})
         ind, sub = str(r["industry"]), str(r["sub_industry"])
         if ind and ind not in e["i"]:
             e["i"].append(ind)
         if sub and sub not in e["s"]:
             e["s"].append(sub)
+        # (industry, sub_industry) 配對：產業→次產業第二層 drill 用（前端需此配對）
+        if ind and sub and [ind, sub] not in e["p"]:
+            e["p"].append([ind, sub])
     industries = sorted({i for v in cmap.values() for i in v["i"]})
     snap = {
         "generated_at": datetime.now(TPE).isoformat(),

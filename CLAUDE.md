@@ -100,7 +100,10 @@ GitHub Pages
 ## 類股資金流（2026-06-28 新增，後端＋前端完成）
 
 - **目的**：在現有逐檔法人買賣超上加「分類維度」，看資金流向哪類股。兩種分類法 × 四法人別。
-- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest.json`(單日)/`sector_ranges.json`(r5/10/20/65)，**custom/本週/本月/上週/上月暫不支援**（顯示提示；未來可鏡像 `runCustomRange` 前端聚合）。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。已用 06-26 驗證 exch/chain 排序、drill-down、1d/r5、法人別切換皆正常。
+- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest.json`(單日)/`sector_ranges.json`(r5/10/20/65)。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。
+- **custom/本週/本月/上週/上月**：`runCustomRange` 算好逐檔 agg 後呼叫 `jPageSectors(agg, chainMap)` 即時建類股 view 存 `state.customSectors`（鏡像後端 `build_view`）；`currentSectors()` 這些模式回 customSectors。需 `ensureChainMap()`（載 `industry_chain.json` 的 `map`）。
+- **產業鏈第二層 drill**：chain 頁 產業→**次產業**→成分股。`industry_chain.json` 的 `map[code].p` 存 `(產業,次產業)` 配對（`--build-chain` 產生）；`chainSubLevel()` 用配對把某產業的成分股歸到各次產業、再點次產業列出個股（`.subsectlink` delegated click，`state.sub.chain.opensub`）。展開時上層摘要表壓到 190px 讓深層露出、scrollIntoView。
+- 已驗證：exch/chain 排序、兩層 drill、1d/r5/上週、法人別切換、無 console error。例：半導體→IC封測(+116.5億)→旺宏/日月光/南茂/力成。
 - **分類法**：`exchange`（交易所產業別，來自 `meta.stocks[code].industry`，**互斥可加總**）/ `chain`（產業鏈 `industry`，來自 `industry_chain.json`，**多對多**）。
 - **法人別**：`total`（=f+t+d）/ `foreign` / `trust` / `dealer`。
 - **`src/sectors.py`**：**重用 `budget.load_daily`+`budget.aggregate`**（不重抓、不重算流量，口徑同專案：張＋千元）；逐檔歸戶後輸出 `data/sector_latest.json`（單日）、`data/sector_ranges.json`（r5/10/20/65）。結構：`classifications.{exchange|chain}.investors.{total|foreign|trust|dealer}=[{sector,net_amt_k,net_lots,n,n_buy,n_sell}]` + `stocks:[逐檔流量列含 exch/chain 標籤]`（前端點類股→filter stocks 排序個股）。
