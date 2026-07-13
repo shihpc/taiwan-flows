@@ -11,7 +11,7 @@
 
 ## 快速接手（最新狀態，2026-06-28 更新）
 
-- **資料現況**：全站對齊 **2026-06-26**（latest.json / foreign_history / status sources 皆 06-26）。每日排程**週一~五 21:00 台北**自動跑（`cron: 0 13 * * 1-5`）。
+- **資料現況**：全站對齊 **2026-06-26**（latest.json / foreign_history / status sources 皆 06-26）。每日排程**週一~五 21:19 台北**自動跑（`cron: 19 13 * * 1-5`；2026-07-14 由 21:00 延後——TaiwanStockShareholding 官方 21:00 更新，留緩衝）。
 - **近期重要修正/功能**（細節見下方各段）：
   - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
   - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
@@ -62,7 +62,7 @@ GitHub Pages
 | `python src/healthcheck.py [--date D] [--fix]` | daily.close vs 權威源逐檔比對；`--fix` 在 critical 時重抓該日 pipeline |
 | `python src/run_daily.py` | 排程入口：pipeline + **healthcheck** + budget + foreign_flows + **sectors** + status.json（Actions 用） |
 
-每日排程 `.github/workflows/daily.yml`：**13:00 UTC（21:00 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00。）
+每日排程 `.github/workflows/daily.yml`：**13:19 UTC（21:19 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00；2026-07-14 改 21:19——外資持股官方 21:00 才更新，21:00 整起跑會踩到未更新資料。）
 
 ## 資料來源與口徑（重要，踩過的雷）
 
