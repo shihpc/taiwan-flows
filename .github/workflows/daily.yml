@@ -5,8 +5,12 @@ on:
     # 21:19 台北 = 13:19 UTC，週一~週五（TaiwanStockShareholding 外資持股官方 21:00 才更新，
     # 21:00 整起跑會踩到未更新的持股資料；延後 19 分留緩衝＋冷門分鐘避開整點壅塞，
     # 2026-07-14 依審計調整，原 21:00。非交易日由程式自行跳過）
+    #（雙觸發機制：taiwan-flow-live-v2 的 Cloudflare Worker「FinMind 哨兵」會在台北
+    # 19:00-23:00 每 5 分探測法人買賣超/外資持股落地，一落地即 workflow_dispatch 本
+    # workflow，通常比這條 cron 早跑；cron 保留當備援，管線冪等、多跑無害。
+    # 哨兵程式：taiwan-flow-live-v2/worker/src/index.js 的 runSentinel）
     - cron: "19 13 * * 1-5"
-  workflow_dispatch: {}   # GitHub App 手動觸發
+  workflow_dispatch: {}   # GitHub App 手動觸發＋FinMind 哨兵自動觸發
 
 # 讓 GITHUB_TOKEN 能 push commit
 permissions:
