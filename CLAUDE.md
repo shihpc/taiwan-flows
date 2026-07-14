@@ -8,6 +8,7 @@
 - **線上**：https://shihpc.github.io/taiwan-flows/
 - **規格書**：`taiwan-flows-spec_V1.md`（V1 定稿，部分已被後續需求覆蓋，見下方「規格後的演進」）
 - **姊妹專案**：`taiwan-stock-radar`（radar 之後會以本專案輸出的 JSON 為資料源）
+- **日期欄語意**：`latest.json`/`meta.json` 的 `date`／`generated_at`（台北 +08:00）／`baseline_date`（投信庫存累計種子日，凍結於 2026-04-30；注意發行張數 `issued_lots` 本身每交易日更新，非凍結）等欄位語意，與跨站產出檔的統一對照，見 postmkt repo 的 `docs/date-semantics.md`。
 
 ## 快速接手（最新狀態，2026-06-28 更新）
 
