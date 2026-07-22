@@ -1,1 +1,1 @@
-{"date":"2026-07-22","status":"no_data","note":"非交易日或資料尚未更新","sources":{"daily":"2026-07-21","totals":"2026-07-21","futures":"2026-07-21","foreign":"2026-07-21"},"checked_at":"2026-07-22T08:32:02.578348+08:00"}
+{"date":"2026-07-22","status":"ok","note":"","sources":{"daily":"2026-07-22","totals":"2026-07-22","futures":"2026-07-22","foreign":"2026-07-22"},"checked_at":"2026-07-22T17:01:22.440912+08:00","healthcheck":{"date":"2026-07-22","checked_at":"2026-07-22T17:01:07.603987+08:00","severity":"ok","compared":2629,"mismatch":0,"mismatch_pct":0.0,"worst":[]}}
