@@ -38,7 +38,19 @@ def _load_token() -> str:
     raise RuntimeError("找不到 FINMIND_TOKEN（環境變數或 .env 都沒有）")
 
 
-TOKEN = _load_token()
+# token 延後到「真的要打 API」時才取（lazy）。
+# 原本在模組層 `TOKEN = _load_token()`，導致任何 import 鏈碰到 finmind 就必須有 token
+# ——budget.py / sectors.py 只讀本地 JSON 重算，卻因 budget→futures→finmind 被綁死，
+# 沒 token 無法離線重算、也無法寫單元測試。改 lazy 後純本地路徑不再需要 token。
+_TOKEN: Optional[str] = None
+
+
+def get_token() -> str:
+    """取得 token（第一次呼叫才讀取並快取）。"""
+    global _TOKEN
+    if _TOKEN is None:
+        _TOKEN = _load_token()
+    return _TOKEN
 
 
 def fm_get(dataset: str, retries: int = 3, backoff: float = 10.0, **params) -> Optional[pd.DataFrame]:
@@ -53,7 +65,7 @@ def fm_get(dataset: str, retries: int = 3, backoff: float = 10.0, **params) -> O
         backoff：重試間隔秒數（FinMind 尚未更新資料時給它時間）
         **params：data_id、date、start_date、end_date 等
     """
-    query = {"dataset": dataset, "token": TOKEN, **params}
+    query = {"dataset": dataset, "token": get_token(), **params}
     last_err = None
     for attempt in range(1, retries + 1):
         try:
@@ -86,7 +98,7 @@ def check_quota() -> dict:
     try:
         r = requests.get(
             FINMIND_USER_INFO,
-            headers={"Authorization": f"Bearer {TOKEN}"},
+            headers={"Authorization": f"Bearer {get_token()}"},
             timeout=10,
         )
         r.raise_for_status()

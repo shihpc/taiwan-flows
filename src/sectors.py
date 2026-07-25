@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import budget  # noqa: E402  重用 load_daily / aggregate / WINDOWS
+from budget import jround  # noqa: E402  與前端 Math.round 同語意（見 budget.jround）
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sectors")
@@ -133,7 +134,7 @@ def stock_rows(agg: dict, chain_map: dict[str, list[str]]) -> list[dict]:
             "close": a["close"], "chg_pct": a["chg_pct"],
             "f_net": f_net, "f_amt": f_amt, "t_net": t_net, "t_amt": t_amt,
             "d_net": d_net, "d_amt": d_amt,
-            "tot_net": round(f_net + t_net + d_net, 1), "tot_amt": round(f_amt + t_amt + d_amt),
+            "tot_net": jround(f_net + t_net + d_net, 1), "tot_amt": jround(f_amt + t_amt + d_amt),
         })
     return rows
 
@@ -157,8 +158,9 @@ def summarize(rows: list[dict], classify: str, investor: str) -> list[dict]:
                 b["n_buy"] += 1
             elif net < 0:
                 b["n_sell"] += 1
-    out = [{"sector": s, **v, "net_lots": round(v["net_lots"], 1)} for s, v in buckets.items()]
-    out.sort(key=lambda x: x["net_amt_k"], reverse=True)
+    out = [{"sector": s, **v, "net_lots": jround(v["net_lots"], 1)} for s, v in buckets.items()]
+    # 次鍵 sector：金額同值（常見 0）時與前端 jPageSectors 給出同一排名
+    out.sort(key=lambda x: (-x["net_amt_k"], x["sector"]))
     return out
 
 
@@ -182,10 +184,11 @@ def build_view(agg: dict, chain_map: dict[str, list[str]]) -> dict:
 # 主程式
 # ════════════════════════════════════════════════════════════════
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # argv 可由呼叫端（run_daily / verify_daily）明確傳空清單，避免吃到上層的 CLI 參數
     ap = argparse.ArgumentParser()
     ap.add_argument("--build-chain", action="store_true", help="(重)抓產業鏈 snapshot 後結束")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.build_chain:
         build_chain_snapshot()
         return

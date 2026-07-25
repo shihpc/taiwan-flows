@@ -1,0 +1,42 @@
+name: parity
+
+# 前後端聚合口徑一致性測試。
+# 單日/近N日走後端預算（budget.py/sectors.py），自訂區間/本週/上週/上月走前端聚合
+# （index.html 的 aggregateRange/jPage*）——同一套口徑兩份實作，沒有守門就會靜默漂移。
+# 只讀 repo 內的 data/，**不需要 FINMIND_TOKEN**（finmind.py 的 token 已改 lazy 載入）。
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "index.html"
+      - "tests/**"
+      - ".github/workflows/parity.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "index.html"
+      - "tests/**"
+  workflow_dispatch: {}
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Parity（5 個視窗全比）
+        run: python tests/parity.py --n 1 5 10 20 65

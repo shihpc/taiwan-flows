@@ -10,9 +10,27 @@
 - **姊妹專案**：`taiwan-stock-radar`（radar 之後會以本專案輸出的 JSON 為資料源）
 - **日期欄語意**：`latest.json`/`meta.json` 的 `date`／`generated_at`（台北 +08:00）／`baseline_date`（投信庫存累計種子日，凍結於 2026-04-30；注意發行張數 `issued_lots` 本身每交易日更新，非凍結）等欄位語意，與跨站產出檔的統一對照，見 postmkt repo 的 `docs/date-semantics.md`。
 
-## 快速接手（最新狀態，2026-06-28 更新）
+## 快速接手（最新狀態，2026-07-25 更新）
 
-- **資料現況**：全站對齊 **2026-06-26**（latest.json / foreign_history / status sources 皆 06-26）。每日排程**週一~五 21:19 台北**自動跑（`cron: 19 13 * * 1-5`；2026-07-14 由 21:00 延後——TaiwanStockShareholding 官方 21:00 更新，留緩衝）。
+- **資料現況**：全站對齊 **2026-07-24**（91 個交易日，2026-03-11 起）。每日排程**週一~五 21:19 台北**自動跑（`cron: 19 13 * * 1-5`；2026-07-14 由 21:00 延後——TaiwanStockShareholding 官方 21:00 更新，留緩衝）。
+- **雙觸發**：主觸發是 `taiwan-flow-live-v2` 的 Cloudflare Worker「FinMind 哨兵」（台北 19:00–23:00 每 5 分探測法人/持股落地，一落地就 `workflow_dispatch` daily.yml，通常早於 cron）；cron 留作備援，管線冪等、多跑無害。哨兵程式：`taiwan-flow-live-v2/worker/src/index.js` 的 `runSentinel`。
+- **另有兩支 workflow**（2026-07-25 新增）：`verify.yml`（23:40 台北，延後獨立驗證收盤價 + 必要時重抓修復）、`parity.yml`（改到 src/index.html 就跑前後端口徑一致性測試，**不需 token**）。
+
+### 2026-07-25 優化批次（全部已驗證）
+
+| 項目 | 內容 |
+|------|------|
+| **健檢改延後班** | 原本 `run_daily` 在 pipeline 後立刻跑 healthcheck，但它比對的權威源就是 pipeline 剛用過的 `TaiwanStockPrice`，同一次排程內相隔幾秒必然拿到同一份回應 → severity 恆為 ok，**6/26 那類事故完全驗不出來**（6/26 驗得出來是因為事後手動 `--date` 跑）。改由 `src/verify_daily.py` + `verify.yml`（23:40 台北）延後獨立驗證，critical 時直接重抓並重算衍生產出。`run_daily` 當天先把 `status.json.healthcheck.severity` 標 `pending`。 |
+| **前後端 parity 測試** | `tests/parity.py` + `tests/extract_js.mjs`：從 index.html 抽出 `aggregateRange`/`jPage*`/`cmpD` 在 node 沙箱跑同一份 daily，與 Python 逐檔逐欄比對（5 視窗全比、零容差）。**抓出 3 類真實漂移並修掉**：①`bias20` 的 MA20 取樣（Python 取「最後 20 個有效收盤」會往停牌前補樣本，JS 取「最近 20 交易日」）②四捨五入（Python `round` 是 banker's、JS `Math.round` 是 half-up → 每視窗數十檔 `*_amt` 差 1 千元；已統一走 `budget.jround`）③排序 tie-break（主鍵同值時 JS 物件把「像整數的鍵」排在字串鍵前，Python 依 meta.stocks 插入序 → **Top30 選出的成員都不同**；兩邊都加次鍵 `code`／類股用 `sector`）。 |
+| **token 改 lazy** | `finmind.py` 原本模組層 `TOKEN = _load_token()`，任何 import 鏈碰到就必須有 token → `budget`/`sectors` 明明只讀本地 JSON 也被綁死，無法離線重算或寫測試。改 `get_token()` 延後取。parity workflow 因此不需要 secret。 |
+| **daily.yml timeout 30→55 分** | 重試迴圈是 3 次 run_daily（各 3~5 分）＋ 2 次 `sleep 600`，原本 30 分會在第三次嘗試中途被砍；**job 被 timeout 砍時 `Commit & push` 不會執行**，等於前兩次抓好的資料整包丟掉。 |
+| **前端首屏** | `sector_latest.json`（~575KB，只有產業別/產業鏈 tab 要用）移出首屏改 lazy；boot 的 5 個串行 await 改 `Promise.all`。首屏 JSON 從 ~1MB 降到 ~150KB。lazy 載入統一走 `lazyJson()`（in-flight 去重 + `FAILED` 標記，避免 `currentSectors` 的 `.then(render)` 在載入失敗時無限重試）。 |
+| **自訂區間下載** | `runCustomRange` 原本逐日 `await`（65 天＝65 個序列 RTT、~17MB）→ 改 `fetchDailyMany` 6 條並行（實測 peak in-flight 6 vs 1）。 |
+| **sessionStorage** | 原本存**展開後**的物件（698KB/日，65 天要 44MB）→ 遠超 5MB 配額，`setItem` 幾乎必然丟例外被靜靜吃掉，且每次 miss 白做一次 698KB `JSON.stringify`。改存**壓縮原格式**（256KB/日），讀取時才展開；舊格式讀到會自動丟棄重抓。 |
+| **argv 清理** | `budget`/`foreign_flows`/`sectors`/`run_daily` 的 `main` 改 `main(argv=None)`，移除 `run_daily` 裡三處 `sys.argv` 竄改；共用的重算流程抽成 `run_daily.rebuild_products()`（`verify_daily` 重抓後也呼叫它）。 |
+| **requirements.txt** | 移除開頭的 UTF-8 BOM。 |
+
+**已量測、確認不必優化**：後端運算不是瓶頸——`load_daily` 2.5s、`aggregate` 0.3~0.8s/窗、`budget.main` 4.0s、`sectors.main` 3.6s。`budget` 與 `sectors` 各自重跑一次 load+5 窗（多花約 5s），相對 30 分鐘的 job 無意義，別為此增加耦合。
 - **近期重要修正/功能**（細節見下方各段）：
   - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
   - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
@@ -20,7 +38,8 @@
   - 前端：三大法人卡/台指期卡/ETF概況**可開合**（localStorage）、表格**響應式高度**、各卡/tab**資料源日期徽章**（偵測落後）、右上角改顯示**更新時間**、網頁**「🔄 更新資料」鈕**（PAT 觸發 workflow_dispatch）。
   - **ETF 佔比語意**：市值排行＝持股市值/總市值（外資準、投信/自營對ETF無來源顯「—」、自營佔比欄已移除）；成交金額排行＝成交量參與率(買+賣張)/(2×成交張)。
 - **FinMind 現況**：Sponsor **已續約/恢復正常**（2026-06-28，產業鏈等 Sponsor 級資料集可正常抓）。`TaiwanStockPrice` 對**非交易日**（如週末）查詢會回 **HTTP 400 → fm_get 回 None → 報 error**，所以週末手動觸發更新會變紅（屬正常、非 bug）。
-- **⚠ 2026-06-26 daily 價格事故（已修）**：6/26 排程跑時 FinMind `TaiwanStockPrice` 尚未更新完成，**922/2687 檔（高價權值股居多，如 2330 存 227 vs 正確 2340）價格被寫成暫定/舊值**，但法人張數正確 → 衍生金額/成交值/市值/Excel/類股資金流全錯。**偵測**：daily.close 與權威 `TaiwanStockPrice` 逐檔比對；**補救**：`python src/pipeline.py --date 2026-06-26` 重抓（現已正確）→ 重跑 budget/sectors。**教訓→已實作**：`src/healthcheck.py` 逐檔比對 daily.close vs 權威源，`run_daily` 在 pipeline 後自動跑、結果寫進 `status.json.healthcheck`（severity: ok/warn/critical + 最差名單）。critical 時 log 告警並建議 `healthcheck.py --date D --fix` 重抓（**排程不自動重抓**——6/26 證明即時重抓多半仍未 settle，需數小時後 FinMind settle 才有效）。前端可讀 `status.json.healthcheck.severity` 顯示資料品質徽章。已對全期間 73 天掃描：僅 6/26 中招、已修，其餘全相符。
+- **⚠ 2026-06-26 daily 價格事故（已修）**：6/26 排程跑時 FinMind `TaiwanStockPrice` 尚未更新完成，**922/2687 檔（高價權值股居多，如 2330 存 227 vs 正確 2340）價格被寫成暫定/舊值**，但法人張數正確 → 衍生金額/成交值/市值/Excel/類股資金流全錯。**偵測**：daily.close 與權威 `TaiwanStockPrice` 逐檔比對；**補救**：`python src/pipeline.py --date 2026-06-26` 重抓（現已正確）→ 重跑 budget/sectors。已對全期間掃描：僅 6/26 中招、已修，其餘全相符。
+  - **教訓的正確實作（2026-07-25 修正）**：`src/healthcheck.py` 提供純函式 `check()`，但**不能在 run_daily 裡跑**——它的權威源就是 pipeline 剛用過的同一個 API，同一次排程內比對必然相同、severity 恆為 ok（等於沒檢查）。改由 `verify.yml`（23:40 台北）跑 `src/verify_daily.py`：延後數小時後 FinMind 通常已 settle，此時比對才有鑑別力、重抓也才真的修得好，所以**預設就會 `--fix`**（不像原本只印建議），修好後自動 `rebuild_products()` 重算 latest/ranges/foreign/sectors 並 commit。仍 critical 時 job 亮紅通知。前端讀 `status.json.healthcheck.severity`（`pending`＝當天還沒經過獨立驗證／`ok`/`warn`/`critical`）。
 - **待辦/暫緩**：
   - 非交易日手動觸發優雅化（`fm_get` 把 400 視為無資料→no_data，避免紅）——使用者請暫緩。
   - ETF 投信/自營持股無絕對來源（已顯「—」）。
@@ -61,7 +80,9 @@ GitHub Pages
 | `python src/sectors.py --build-chain` | (重)抓產業鏈 → `data/industry_chain.json`（snapshot，變動慢、偶爾跑） |
 | `python src/sectors.py` | 類股資金流：讀 daily+meta+chain → `sector_latest.json`/`sector_ranges.json` |
 | `python src/healthcheck.py [--date D] [--fix]` | daily.close vs 權威源逐檔比對；`--fix` 在 critical 時重抓該日 pipeline |
-| `python src/run_daily.py` | 排程入口：pipeline + **healthcheck** + budget + foreign_flows + **sectors** + status.json（Actions 用） |
+| `python src/run_daily.py` | 每日排程入口：pipeline + budget + foreign_flows + **sectors** + status.json（daily.yml 用）。**不含健檢**（見上） |
+| `python src/verify_daily.py [--date D] [--no-fix]` | **延後驗證班入口**（verify.yml 用）：健檢 → critical 就重抓 → 重算衍生產出 → 寫 status.json.healthcheck |
+| `python tests/parity.py [--n 1 5 10 20 65]` | 前端(index.html) ↔ 後端(budget/sectors) 聚合口徑逐檔比對（免 token、免網路） |
 
 每日排程 `.github/workflows/daily.yml`：**13:19 UTC（21:19 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00；2026-07-14 改 21:19——外資持股官方 21:00 才更新，21:00 整起跑會踩到未更新資料。）
 
@@ -83,7 +104,8 @@ GitHub Pages
 
 ## 前端（index.html，單一檔，vanilla JS）
 
-- **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；已驗證自訂近20日 == 預算 r20）。
+- **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
+- **首屏只載 4 支小檔**（latest / meta / totals / foreign_history / status，並行）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
 - **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
@@ -125,12 +147,18 @@ GitHub Pages
 ## 檔案結構
 
 ```
-src/  finmind.py(API client) build_meta.py pipeline.py backfill.py
-      backfill_market.py futures.py totals.py budget.py run_daily.py
-data/ daily/YYYYMMDD.json(逐檔14欄) futures/ meta.json totals.json
-      latest.json latest_ranges.json status.json baseline_20260430.json
-index.html  .github/workflows/daily.yml  taiwan-flows-spec_V1.md
+src/   finmind.py(API client, token lazy) build_meta.py pipeline.py backfill.py
+       backfill_market.py futures.py totals.py budget.py sectors.py foreign_flows.py
+       healthcheck.py run_daily.py(每日) verify_daily.py(延後驗證)
+tests/ parity.py(前後端口徑比對) extract_js.mjs(從 index.html 抽 JS 聚合函式)
+data/  daily/YYYYMMDD.json(逐檔20欄) futures/ meta.json totals.json
+       latest.json latest_ranges.json sector_latest.json sector_ranges.json
+       industry_chain.json foreign_history.json status.json baseline_20260430.json
+index.html  taiwan-flows-spec_V1.md
+.github/workflows/  daily.yml(21:19 台北) verify.yml(23:40 台北) parity.yml(push 時)
 ```
+
+**改動 `budget.py`/`sectors.py`/`index.html` 的聚合邏輯時**：這是同一套口徑的兩份實作（單日/近N日走後端預算，自訂區間/本週/上週/上月走前端聚合），**改一邊就要改另一邊**，並跑 `python tests/parity.py --n 1 5 10 20 65` 確認零差異。四捨五入一律用 `budget.jround`（JS `Math.round` 語意），排序一律帶次鍵（`code`／類股用 `sector`），`chg_pct` 的寫法固定 `c/base*100-100`——這三點都是實際踩過的漂移。
 
 daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct`（張/千元/%）。
 
@@ -197,6 +225,8 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 
 ## 待辦 / 已知限制
 
+- **未做（2026-07-25 評估時明確排除）**：三個 repo（taiwan-flows / taiwan-flow-live-v2 / taiwan-stock-news）各有一份 FinMind client，token 載入、重試、節流各寫一次、行為不一致（例如非交易日 400 只有 taiwan-flows 會炸紅）。要共用需先有套件/vendoring 機制，跨 repo 改動風險高於收益，暫不動。
+- **觀察名單**：每個交易日 commit 約 4MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB）。目前靠 git delta 壓縮還撐得住，真要處理最省事的是 `sector_ranges` 不落 git、區間 drill-down 改前端即時聚合（`runCustomRange` 那條路徑已存在且有 parity 守門）。
 - 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
 - 逐檔表只有買賣超「淨額」，無買/賖分項（FinMind 有，但 daily schema 未存）；要的話需加欄位 + 重跑回補。
 - GitHub Actions 在美國 runner 抓 TWSE/TPEx 偶爾節流；totals.py 已內建重試，若某天漏抓重跑 `backfill_market.py`。

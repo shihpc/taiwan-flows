@@ -1,0 +1,87 @@
+name: verify-daily
+
+# 延後獨立驗證班：收盤價健檢 + 必要時重抓修復。
+#
+# 為什麼要另開一班而不在 daily.yml 裡驗：healthcheck 比對的權威源就是 pipeline 剛用過的
+# FinMind TaiwanStockPrice，同一次排程內前後相隔幾秒必然拿到同一份回應，severity 恆為 ok
+# ——2026-06-26 那類「排程早於 FinMind settle、922 檔價格是暫定值」的事故完全驗不出來。
+# 隔數小時後 FinMind 通常已 settle，此時比對才有鑑別力，重抓也才真的能修好。
+
+on:
+  schedule:
+    # 15:40 UTC = 23:40 台北，週一~五（daily.yml 21:19 台北跑完後 ~2.5 小時）
+    - cron: "40 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "指定交易日 YYYY-MM-DD（留空＝最新 daily）"
+        required: false
+      no_fix:
+        description: "只驗不修（true/false）"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-flows      # 與 daily.yml 同群組排隊，避免與每日排程同時寫 data/
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # push 前要 rebase
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Verify daily close prices
+        id: verify
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: |
+          args=""
+          [ -n "${{ github.event.inputs.date }}" ] && args="--date ${{ github.event.inputs.date }}"
+          [ "${{ github.event.inputs.no_fix }}" = "true" ] && args="$args --no-fix"
+          # 仍 critical 時 verify_daily 回 1；先記下來，等 commit 完再決定 job 成敗，
+          # 免得驗證結果與已修好的資料因為 job 中止而沒被推上去
+          set +e
+          python src/verify_daily.py $args
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Commit & push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "無變更，略過 commit"; exit 0
+          fi
+          d=$(python -c "import json;print(json.load(open('data/status.json'))['date'])")
+          sev=$(python -c "import json;print(json.load(open('data/status.json')).get('healthcheck',{}).get('severity','?'))")
+          git commit -m "verify: $d price healthcheck=$sev [skip ci]"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" \
+              && git push origin "HEAD:${GITHUB_REF_NAME}" \
+              && { echo "已推送（嘗試 $i）"; exit 0; }
+            echo "遠端有更新或推送衝突，rebase 後重試 $i…"; sleep 5
+          done
+          echo "::error::push 重試 5 次仍失敗"; exit 1
+
+      - name: Fail if still critical
+        if: steps.verify.outputs.rc != '0'
+        run: |
+          echo "::error::收盤價健檢仍為 critical（重抓後未修復）——FinMind 可能尚未 settle，"
+          echo "::error::可稍後手動 workflow_dispatch 本 workflow，或跑 python src/verify_daily.py"
+          exit 1

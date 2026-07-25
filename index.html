@@ -304,22 +304,42 @@ async function boot(){
     document.getElementById("updated").style.display="none";  // 併入資料日列
   }catch(e){ document.getElementById("main").innerHTML =
     `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
-  await loadMeta();  // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
+  // meta + 三支小檔並行載入（原本是 5 個 await 串行；彼此無依賴，沒有理由排隊）。
+  // sector_latest.json（~575KB）已移出首屏改 lazy——只有產業別/產業鏈 tab 要用。
+  const jsonOrNull = url => fetch(url,{cache:"no-cache"}).then(r=>r.json()).catch(e=>null);
+  const [, totals, foreignHist, status] = await Promise.all([
+    loadMeta(),                                   // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
+    jsonOrNull("data/totals.json"),
+    jsonOrNull("data/foreign_history.json"),
+    jsonOrNull("data/status.json"),
+  ]);
+  state.totals=totals; state.foreignHist=foreignHist; state.status=status;
   { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
-  try{ state.totals = await (await fetch("data/totals.json",{cache:"no-cache"})).json(); }catch(e){ state.totals=null; }
-  try{ state.foreignHist = await (await fetch("data/foreign_history.json",{cache:"no-cache"})).json(); }catch(e){ state.foreignHist=null; }
-  try{ state.status = await (await fetch("data/status.json",{cache:"no-cache"})).json(); }catch(e){ state.status=null; }
-  try{ state.sectorLatest = await (await fetch("data/sector_latest.json",{cache:"no-cache"})).json(); }catch(e){ state.sectorLatest=null; }
   { const el=document.getElementById("status");  // 右上角顯示更新時間
     if(state.updatedTs){ el.textContent="更新 "+state.updatedTs; el.className="status"+(state.status&&state.status.status==="ok"?" ok":""); }
     else el.style.display="none"; }
   renderTotCard();
   render();
 }
+// ---- lazy JSON：同一支檔案被多次 render 同時要求時只發一個請求；失敗記進 FAILED，
+//      讓 currentSectors 的 `.then(render)` 重試路徑不會變成無限迴圈 ----
+const URL_RANGES="data/latest_ranges.json", URL_SECT_LATEST="data/sector_latest.json",
+      URL_SECT_RANGES="data/sector_ranges.json", URL_CHAIN="data/industry_chain.json";
+const INFLIGHT={}, FAILED={};
+function lazyJson(url){
+  if(FAILED[url]) return Promise.resolve(null);
+  if(!INFLIGHT[url]) INFLIGHT[url]=fetch(url,{cache:"no-cache"}).then(r=>r.json())
+    .catch(e=>{ FAILED[url]=true; delete INFLIGHT[url]; return null; });
+  return INFLIGHT[url];
+}
 async function ensureRanges(){
-  if(state.ranges) return;
-  state.ranges = await (await fetch("data/latest_ranges.json",{cache:"no-cache"})).json();
+  if(!state.ranges) state.ranges = await lazyJson(URL_RANGES);
+}
+// sector_latest.json 約 575KB，只有「產業別/產業鏈」兩個 tab 要用（預設 tab 不需要）
+// → 與 latest_ranges / sector_ranges / industry_chain 一致改成 lazy，別擋首屏。
+async function ensureSectorLatest(){
+  if(!state.sectorLatest) state.sectorLatest = await lazyJson(URL_SECT_LATEST);
 }
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
@@ -327,20 +347,23 @@ function currentPages(){
   return state.ranges.windows[state.mode].pages;
 }
 async function ensureSectorRanges(){
-  if(state.sectorRanges) return;
-  state.sectorRanges = await (await fetch("data/sector_ranges.json",{cache:"no-cache"})).json();
+  if(!state.sectorRanges) state.sectorRanges = await lazyJson(URL_SECT_RANGES);
 }
 async function ensureChainMap(){  // 產業鏈對照（含 (產業,次產業) 配對 p）：custom 聚合 + 次產業 drill 用
-  if(state.chainMap) return;
-  state.chainMap = (await (await fetch("data/industry_chain.json",{cache:"no-cache"})).json()).map;
+  if(!state.chainMap){ const j = await lazyJson(URL_CHAIN); state.chainMap = j ? j.map : null; }
 }
 // 類股資金流：單日讀 sectorLatest；r5/10/20/65 讀 sectorRanges；其他區間暫不支援
 // 回傳 view 物件 / null（不支援）/ undefined（區間檔載入中，載完自動重繪）
 function currentSectors(){
-  if(state.mode==="1d") return state.sectorLatest;
+  if(state.mode==="1d"){
+    if(state.sectorLatest) return state.sectorLatest;
+    if(FAILED[URL_SECT_LATEST]) return null;   // 載入失敗 → 當「不支援」顯示，別無限重試
+    ensureSectorLatest().then(render); return undefined;
+  }
   if(["r5","r10","r20","r65"].includes(state.mode)){
-    if(!state.sectorRanges){ ensureSectorRanges().then(render); return undefined; }
-    return state.sectorRanges.windows[state.mode];
+    if(state.sectorRanges) return state.sectorRanges.windows[state.mode];
+    if(FAILED[URL_SECT_RANGES]) return null;
+    ensureSectorRanges().then(render); return undefined;
   }
   if(["custom","thisweek","thismonth","lastweek","lastmonth"].includes(state.mode)) return state.customSectors;
   return null;
@@ -603,7 +626,8 @@ function jPageSectors(agg, chainMap){
     for(const r of stocks){ const secs=classify==="exchange"?[r.exch]:r.chain; if(!secs||!secs.length) continue;
       for(const s of secs){ const o=b[s]||(b[s]={sector:s,net_amt_k:0,net_lots:0,n:0,n_buy:0,n_sell:0});
         o.net_amt_k+=r[af]; o.net_lots+=r[nf]; o.n++; if(r[nf]>0)o.n_buy++; else if(r[nf]<0)o.n_sell++; } }
-    return Object.values(b).map(o=>({...o,net_lots:round(o.net_lots,1)})).sort((x,y)=>y.net_amt_k-x.net_amt_k);
+    return Object.values(b).map(o=>({...o,net_lots:round(o.net_lots,1)}))
+      .sort((x,y)=>(y.net_amt_k-x.net_amt_k)||(x.sector<y.sector?-1:x.sector>y.sector?1:0));
   };
   const mk=cl=>({investors:{total:summarize(cl,"total"),foreign:summarize(cl,"foreign"),trust:summarize(cl,"trust"),dealer:summarize(cl,"dealer")}});
   const cov=stocks.filter(r=>r.chain&&r.chain.length).length;
@@ -927,16 +951,43 @@ document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
 // ================= custom range (browser-side aggregation, mirrors budget.py) =================
 async function loadMeta(){ if(!state.meta) state.meta = await (await fetch("data/meta.json",{cache:"no-cache"})).json(); return state.meta; }
 
-async function fetchDaily(date){
-  if(state.dailyCache[date]) return state.dailyCache[date];
-  const ss=sessionStorage.getItem("d:"+date);
-  if(ss){ const m=JSON.parse(ss); state.dailyCache[date]=m; return m; }
-  const doc=await (await fetch(`data/daily/${date.replaceAll("-","")}.json`)).json();
+// 壓縮的 {cols,rows} → {code: rowObject}（aggregateRange 用得到的形狀）
+function expandDaily(doc){
   const map={};
   for(const r of doc.rows){ const o={}; doc.cols.forEach((c,i)=>o[c]=r[i]); map[r[0]]=o; }
-  state.dailyCache[date]=map;
-  try{ sessionStorage.setItem("d:"+date, JSON.stringify(map)); }catch(e){}
   return map;
+}
+async function fetchDaily(date){
+  if(state.dailyCache[date]) return state.dailyCache[date];
+  // sessionStorage 存**壓縮原格式**（~256KB/日），不存展開後的物件（~698KB/日）：
+  // 展開後 65 天要 44MB，遠超 5MB 配額 → setItem 幾乎必然丟例外被靜靜吃掉，
+  // 而且每次 miss 都白做一次 698KB 的 JSON.stringify。存原格式配額約可容納 3~4 倍天數。
+  const ss=sessionStorage.getItem("d:"+date);
+  if(ss){
+    try{
+      const map=expandDaily(JSON.parse(ss));
+      state.dailyCache[date]=map; return map;
+    }catch(e){ sessionStorage.removeItem("d:"+date); }   // 舊格式/損壞 → 丟掉重抓
+  }
+  const doc=await (await fetch(`data/daily/${date.replaceAll("-","")}.json`)).json();
+  const map=expandDaily(doc);
+  state.dailyCache[date]=map;
+  try{ sessionStorage.setItem("d:"+date, JSON.stringify({cols:doc.cols,rows:doc.rows})); }catch(e){}
+  return map;
+}
+// 併發抓多個交易日（原本是 for + await 串行：65 天＝65 個序列 RTT、約 17MB）。
+// 限 6 條並行：兼顧瀏覽器同源連線上限與 GitHub Pages，不會把進度條卡住。
+async function fetchDailyMany(dates, onProgress){
+  const out={}; let done=0, next=0;
+  const worker=async()=>{
+    while(next<dates.length){
+      const d=dates[next++];
+      out[d]=await fetchDaily(d);
+      if(onProgress) onProgress(++done, dates.length);
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(6,dates.length)}, worker));
+  return out;
 }
 async function fetchTxOI(date){
   try{
@@ -984,6 +1035,11 @@ function aggregateRange(rangeDates, docs, meta, prevDate, ma20dates){
   return agg;
 }
 const jr=(num,den)=>den?round(num/den*100,2):null;
+// 排序 tie-break：主鍵同值時一律以代號遞增（後端 budget.py 同步加了次鍵 code）。
+// 不指定次鍵時排名取決於物件走訪順序——JS 把「像整數的鍵」(2330) 排在字串鍵
+// (00637L) 之前且依數值遞增，Python dict 則依 meta.stocks 插入序 → 佔成交量這種
+// 常出現整數比(1.0)的排行，兩邊會選出不同的 Top30 成員（見 tests/parity.py）。
+const cmpD=f=>(x,y)=>(f(y)-f(x))||(x.code<y.code?-1:x.code>y.code?1:0);
 function jInstRow(a,side){
   const net=a[side+"_net"],amt=a[side+"_amt"],issued=a.issued_lots;
   let hold,hpct;
@@ -996,9 +1052,9 @@ function jInstRow(a,side){
 function jPageInst(agg,side){
   const rows=Object.values(agg).filter(a=>a[side+"_net"]!==0);
   const buy=rows.filter(r=>r[side+"_net"]>0), sell=rows.filter(r=>r[side+"_net"]<0);
-  const A=lst=>lst.filter(r=>r.issued_lots).sort((x,y)=>Math.abs(y[side+"_net"])/y.issued_lots-Math.abs(x[side+"_net"])/x.issued_lots).slice(0,30).map(a=>jInstRow(a,side));
-  const B=lst=>[...lst].sort((x,y)=>Math.abs(y[side+"_amt"])-Math.abs(x[side+"_amt"])).slice(0,30).map(a=>jInstRow(a,side));
-  const V=lst=>lst.filter(r=>r.vol).sort((x,y)=>Math.abs(y[side+"_net"])/y.vol-Math.abs(x[side+"_net"])/x.vol).slice(0,30).map(a=>jInstRow(a,side));
+  const A=lst=>lst.filter(r=>r.issued_lots).sort(cmpD(a=>Math.abs(a[side+"_net"])/a.issued_lots)).slice(0,30).map(a=>jInstRow(a,side));
+  const B=lst=>[...lst].sort(cmpD(a=>Math.abs(a[side+"_amt"]))).slice(0,30).map(a=>jInstRow(a,side));
+  const V=lst=>lst.filter(r=>r.vol).sort(cmpD(a=>Math.abs(a[side+"_net"])/a.vol)).slice(0,30).map(a=>jInstRow(a,side));
   return {buy_by_chg:A(buy),buy_by_amt:B(buy),buy_by_vol:V(buy),sell_by_chg:A(sell),sell_by_amt:B(sell),sell_by_vol:V(sell)};
 }
 function jPageEtf(agg){
@@ -1018,7 +1074,7 @@ function jPageEtf(agg){
     const pct=v=>m?round(v/m*100,2):null;  // 佔比＝持股市值/總市值；投信(ETF失真)/自營(無來源)→—
     return {code:a.code,name:a.name,mktcap_k:m,f_hold_value_k:fv,t_hold_value_k:null,other_value_k:m-fv,
       f_share:pct(fv),t_share:null,d_share:null,chg_pct:a.chg_pct};};
-  const top=(lst,key)=>[...lst].sort((x,y)=>key(y)-key(x)).slice(0,20);
+  const top=(lst,key)=>[...lst].sort(cmpD(key)).slice(0,20);
   return {stats:{all:stats(etfs),nonbond:stats(nonbond),bond:stats(bond)},
     turnover_stock:top(nonbond,a=>a.amt).map(tRow), turnover_bond:top(bond,a=>a.amt).map(tRow),
     mktcap_stock:top(nonbond,mc).map(mRow), mktcap_bond:top(bond,mc).map(mRow)};
@@ -1027,16 +1083,16 @@ function jPageSync(agg){
   const rows=Object.values(agg);
   const row=a=>({code:a.code,name:a.name,t_amt_k:a.t_amt,t_net:a.t_net,f_amt_k:a.f_amt,f_net:a.f_net,
     sum_amt_k:a.t_amt+a.f_amt,sum_net:round(a.t_net+a.f_net,1),strength_k:Math.min(Math.abs(a.t_amt),Math.abs(a.f_amt)),chg_pct:a.chg_pct});
-  const sb=rows.filter(a=>a.t_net>0&&a.f_net>0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30);
-  const ss=rows.filter(a=>a.t_net<0&&a.f_net<0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30);
+  const sb=rows.filter(a=>a.t_net>0&&a.f_net>0).map(row).sort(cmpD(r=>r.strength_k)).slice(0,30);
+  const ss=rows.filter(a=>a.t_net<0&&a.f_net<0).map(row).sort(cmpD(r=>r.strength_k)).slice(0,30);
   return {sync_buy:sb,sync_sell:ss};
 }
 function jPageOppose(agg){
   const rows=Object.values(agg);
   const row=a=>({code:a.code,name:a.name,t_amt_k:a.t_amt,t_net:a.t_net,f_amt_k:a.f_amt,f_net:a.f_net,
     strength_k:Math.min(Math.abs(a.t_amt),Math.abs(a.f_amt)),chg_pct:a.chg_pct});
-  return {f_buy_t_sell:rows.filter(a=>a.f_net>0&&a.t_net<0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30),
-          f_sell_t_buy:rows.filter(a=>a.f_net<0&&a.t_net>0).map(row).sort((x,y)=>y.strength_k-x.strength_k).slice(0,30)};
+  return {f_buy_t_sell:rows.filter(a=>a.f_net>0&&a.t_net<0).map(row).sort(cmpD(r=>r.strength_k)).slice(0,30),
+          f_sell_t_buy:rows.filter(a=>a.f_net<0&&a.t_net>0).map(row).sort(cmpD(r=>r.strength_k)).slice(0,30)};
 }
 function renderPicker(){
   const cal=state.meta.calendar;
@@ -1092,9 +1148,8 @@ async function runCustomRange(startStr,endStr,kind="custom"){
   const prevDate=i1>0?cal[i1-1]:null;
   const ma20dates=cal.slice(Math.max(0,i2-19),i2+1);
   const need=[...new Set([...inRange, ...(prevDate?[prevDate]:[]), ...ma20dates])].sort();
-  const docs={};
-  for(let i=0;i<need.length;i++){ setProg(i,need.length); docs[need[i]]=await fetchDaily(need[i]); }
-  setProg(need.length,need.length);
+  setProg(0,need.length);
+  const docs=await fetchDailyMany(need, setProg);   // 6 條並行（原為逐日串行）
   const agg=aggregateRange(inRange,docs,state.meta,prevDate,ma20dates);
   const futures=await fetchTxOI(d2).then(cur=>{
     if(!cur) return null;
