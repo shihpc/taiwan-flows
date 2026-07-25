@@ -138,10 +138,11 @@ def build(tse: dict[str, dict], otc: dict[str, dict]) -> dict:
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # argv 可由呼叫端（run_daily / verify_daily）明確傳空清單，避免吃到上層的 CLI 參數
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-finmind", action="store_true", help="略過 FinMind（僅用既有快取，測試用）")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     totals = json.loads(TOTALS_PATH.read_text(encoding="utf-8")) if TOTALS_PATH.exists() else {"rows": {}}
 

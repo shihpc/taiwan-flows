@@ -23,7 +23,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 55 分：下方重試迴圈最多 3 次 run_daily（各約 3~5 分）＋ 2 次 sleep 600（共 20 分），
+    # 原本的 30 分會在第三次嘗試中途被 timeout 砍掉——而 job 被砍時「Commit & push」
+    # 這個 step 根本不會執行，等於前兩次已經抓好的資料整包丟掉。
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v5
         with:

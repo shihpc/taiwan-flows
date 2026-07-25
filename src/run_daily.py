@@ -8,6 +8,11 @@
 #
 # 非交易日 / FinMind 尚未更新：pipeline 回 False → 寫 status.json 標記，
 #   exit code 0（讓 workflow 正常結束、不寄失敗信；前端依 status 顯示「資料未更新」）。
+#
+# 收盤價健檢**不在這裡**跑：healthcheck 比對的權威源就是 pipeline 剛用過的
+#   TaiwanStockPrice，同一次排程內前後相隔幾秒、拿到的必然是同一份（可能同樣未
+#   settle 的）回應，severity 幾乎恆為 ok，抓不到 2026-06-26 那類事故。
+#   改由 verify.yml（23:40 台北）跑 src/verify_daily.py 做延後獨立驗證。
 
 from __future__ import annotations
 
@@ -23,7 +28,6 @@ from pipeline import run_date  # noqa: E402
 import budget  # noqa: E402
 import foreign_flows  # noqa: E402
 import sectors  # noqa: E402
-import healthcheck  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("run_daily")
@@ -65,6 +69,13 @@ def gather_sources() -> dict:
     return src
 
 
+def read_status() -> dict:
+    try:
+        return json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def write_status(date: str, status: str, note: str = "", healthcheck: dict | None = None) -> None:
     payload = {"date": date, "status": status, "note": note,
                "sources": gather_sources(),
@@ -76,10 +87,35 @@ def write_status(date: str, status: str, note: str = "", healthcheck: dict | Non
         encoding="utf-8")
 
 
-def main() -> None:
+def rebuild_products() -> None:
+    """由現成 daily 重算所有衍生產出（不打 FinMind 逐檔 API）。
+
+    run_daily 與 verify_daily（延後驗證重抓後）共用：只要 data/daily 變了，
+    latest / latest_ranges / foreign_history / sector_* 都要跟著重算。
+    各子模組的 main 皆接受 argv，明確傳 [] 表示「不吃上層 CLI 參數」。
+    """
+    logger.info("重算 latest.json + latest_ranges.json …")
+    budget.main([])  # 預設含期貨卡
+
+    # 外資買賣超歷史（market 別月/年）— 非致命
+    try:
+        logger.info("重算 foreign_history.json …")
+        foreign_flows.main([])
+    except Exception as e:
+        logger.warning(f"foreign_flows 失敗（略過）：{e}")
+
+    # 類股資金流（交易所產業別 / 產業鏈）— 非致命；讀現成 daily，不再打 FinMind
+    try:
+        logger.info("重算 sector_latest.json + sector_ranges.json …")
+        sectors.main([])
+    except Exception as e:
+        logger.warning(f"sectors 失敗（略過）：{e}")
+
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="交易日 YYYY-MM-DD（預設今天）")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     d = args.date or datetime.now(TPE).date().isoformat()
 
     logger.info(f"=== 每日排程 {d} ===")
@@ -95,54 +131,14 @@ def main() -> None:
         write_status(d, "no_data", "非交易日或資料尚未更新")
         return  # exit 0
 
-    # 收盤價健檢：daily.close vs 權威源（偵測「抓到未 settle 價格」事故）— 非致命，僅標警示
-    hc = None
-    try:
-        hc = healthcheck.check(d)
-        sev = hc.get("severity")
-        if sev == "critical":
-            logger.error(f"⚠ 價格健檢 CRITICAL：{hc.get('mismatch')} 檔不符（{hc.get('mismatch_pct')}%）"
-                         f"，疑似 FinMind 未 settle；建議稍後 `healthcheck.py --date {d} --fix` 重抓")
-        elif sev == "warn":
-            logger.warning(f"價格健檢 warn：{hc.get('mismatch')} 檔零星不符")
-        else:
-            logger.info(f"價格健檢 {sev}")
-    except Exception as e:
-        logger.warning(f"價格健檢失敗（略過）：{e}")
+    rebuild_products()
 
-    logger.info("重算 latest.json + latest_ranges.json …")
-    argv = sys.argv
-    sys.argv = [argv[0]]  # 隔離 argv，避免 budget argparse 吃到 --date
-    try:
-        budget.main()  # 預設含期貨卡
-    finally:
-        sys.argv = argv
-
-    # 外資買賣超歷史（market 別月/年）— 非致命
-    try:
-        logger.info("重算 foreign_history.json …")
-        argv = sys.argv
-        sys.argv = [argv[0]]
-        try:
-            foreign_flows.main()
-        finally:
-            sys.argv = argv
-    except Exception as e:
-        logger.warning(f"foreign_flows 失敗（略過）：{e}")
-
-    # 類股資金流（交易所產業別 / 產業鏈）— 非致命；讀現成 daily，不再打 FinMind
-    try:
-        logger.info("重算 sector_latest.json + sector_ranges.json …")
-        argv = sys.argv
-        sys.argv = [argv[0]]
-        try:
-            sectors.main()
-        finally:
-            sys.argv = argv
-    except Exception as e:
-        logger.warning(f"sectors 失敗（略過）：{e}")
-
-    write_status(d, "ok", "", healthcheck=hc)
+    # 收盤價健檢留給 verify.yml（23:40 台北）的延後獨立驗證；這裡先標 pending，
+    # 讓前端知道「今天的資料還沒經過獨立驗證」而不是誤以為已驗過。
+    write_status(d, "ok", "", healthcheck={
+        "date": d, "severity": "pending",
+        "note": "待 verify_daily 延後驗證（同一次排程內比對權威源無意義）",
+    })
     logger.info(f"=== {d} 完成 ===")
 
 

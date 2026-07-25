@@ -43,6 +43,20 @@ MA_PERIOD = 20  # 乖離月線
 WINDOWS = {"r5": 5, "r10": 10, "r20": 20, "r65": 65}
 
 
+def jround(v: float, nd: int = 0):
+    """與前端 JS `Math.round` 同語意的四捨五入（half-up；負數的 .5 向 +∞）。
+
+    Python 內建 `round()` 是 banker's rounding（half-to-even），`round(36.5)==36`
+    而 JS `Math.round(36.5)===37`。買賣金額＝Σ(張×收盤) 的小數位常恰好落在 .5
+    （張數 1 位、收盤 2 位），實測每個視窗有數十檔 `*_amt` 命中 → 同一檔同一數字
+    在「單日/近N日」（後端預算）與「自訂區間/本週/上週/上月」（前端聚合）會差 1 千元。
+    統一採 JS 語意（tests/parity.py 守門）。
+    """
+    f = 10 ** nd
+    r = math.floor(v * f + 0.5) / f
+    return int(r) if nd == 0 else r
+
+
 # ════════════════════════════════════════════════════════════════
 # 載入
 # ════════════════════════════════════════════════════════════════
@@ -76,6 +90,11 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
     d1 = win[0]
     i1 = dates.index(d1)
     prev = dates[i1 - 1] if i1 > 0 else None  # d1 前一交易日（算漲跌%）
+    # 乖離月線的取樣區間＝「d2 結尾的最近 MA_PERIOD 個交易日」。
+    # 與前端 aggregateRange 的 ma20dates（cal.slice(i2-19, i2+1)）完全一致；
+    # 原本用「所有 ≤d2 的交易日取最後 20 個有效收盤」，遇停牌/新上市會往更早的
+    # 日子補樣本，導致 r20 與自訂區間對同一檔算出不同 bias20（見 tests/parity）。
+    ma_dates = dates[-MA_PERIOD:]
     stocks = meta["stocks"]
 
     agg: dict[str, dict] = {}
@@ -112,30 +131,33 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
             base_close = float(docs[prev][code]["close"])
         elif docs[d1].get(code) and docs[d1][code]["close"] is not None:
             base_close = float(docs[d1][code]["close"])
-        chg = round((close2 / base_close - 1) * 100, 2) if base_close else 0.0
+        # 寫法固定為 `c/base*100-100`（不是 `(c/base-1)*100`）：兩者數學等價但 IEEE754
+        # 誤差不同，(c/base-1)*100 會把 240→226.5 算成 -5.625000000000002，四捨五入後
+        # 變 -5.63 而前端得 -5.62。與 index.html aggregateRange 保持同一寫法。
+        chg = jround(close2 / base_close * 100 - 100, 2) if base_close else 0.0
         # 乖離月線%（均價為 0，如長期未成交股，給 None 避免除以零崩潰）
-        cs = close_series([d for d in dates if d <= d2], docs, code)[-MA_PERIOD:]
+        cs = close_series(ma_dates, docs, code)
         ma = (sum(cs) / len(cs)) if cs else 0
-        bias = round((close2 / ma - 1) * 100, 2) if ma else None
+        bias = jround((close2 / ma - 1) * 100, 2) if ma else None
 
         issued = info.get("issued_lots")
         if issued is not None and (not isinstance(issued, (int, float)) or math.isnan(issued)):
             issued = None
         agg[code] = {
             "code": code, "name": info["name"], "is_etf": info["is_etf"],
-            "industry": info["industry"], "issued_lots": issued, "close": round(close2, 2),
+            "industry": info["industry"], "issued_lots": issued, "close": jround(close2, 2),
             "chg_pct": chg, "bias20": bias,
-            "vol": round(sums["vol"]), "amt": round(sums["amt"]),
-            "t_net": round(sums["t_net"], 1), "t_amt": round(sums["t_amt"]),
-            "f_net": round(sums["f_net"], 1), "f_amt": round(sums["f_amt"]),
-            "d_net": round(sums["d_net"], 1), "d_amt": round(sums["d_amt"]),
+            "vol": jround(sums["vol"]), "amt": jround(sums["amt"]),
+            "t_net": jround(sums["t_net"], 1), "t_amt": jround(sums["t_amt"]),
+            "f_net": jround(sums["f_net"], 1), "f_amt": jround(sums["f_amt"]),
+            "d_net": jround(sums["d_net"], 1), "d_amt": jround(sums["d_amt"]),
             "t_inv": end.get("t_inv"), "f_shares": end.get("f_shares"), "f_pct": end.get("f_pct"),
-            "f_buy": round(sums["f_buy"], 1), "f_sell": round(sums["f_sell"], 1),
-            "t_buy": round(sums["t_buy"], 1), "t_sell": round(sums["t_sell"], 1),
-            "d_buy": round(sums["d_buy"], 1), "d_sell": round(sums["d_sell"], 1),
-            "f_buy_amt": round(amt_acc["f_buy_amt"]), "f_sell_amt": round(amt_acc["f_sell_amt"]),
-            "t_buy_amt": round(amt_acc["t_buy_amt"]), "t_sell_amt": round(amt_acc["t_sell_amt"]),
-            "d_buy_amt": round(amt_acc["d_buy_amt"]), "d_sell_amt": round(amt_acc["d_sell_amt"]),
+            "f_buy": jround(sums["f_buy"], 1), "f_sell": jround(sums["f_sell"], 1),
+            "t_buy": jround(sums["t_buy"], 1), "t_sell": jround(sums["t_sell"], 1),
+            "d_buy": jround(sums["d_buy"], 1), "d_sell": jround(sums["d_sell"], 1),
+            "f_buy_amt": jround(amt_acc["f_buy_amt"]), "f_sell_amt": jround(amt_acc["f_sell_amt"]),
+            "t_buy_amt": jround(amt_acc["t_buy_amt"]), "t_sell_amt": jround(amt_acc["t_sell_amt"]),
+            "d_buy_amt": jround(amt_acc["d_buy_amt"]), "d_sell_amt": jround(amt_acc["d_sell_amt"]),
         }
     return agg
 
@@ -145,7 +167,7 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
 # ════════════════════════════════════════════════════════════════
 
 def _ratio(num, den):
-    return round(num / den * 100, 2) if den else None
+    return jround(num / den * 100, 2) if den else None
 
 
 def _inst_row(a: dict, side: str) -> dict:
@@ -160,7 +182,7 @@ def _inst_row(a: dict, side: str) -> dict:
         hold = a["f_shares"]
         hold_pct = a["f_pct"]
     chg_hold_pct = _ratio(net, issued) if issued else None  # 持股變動%
-    hold_value_m = round(hold * a["close"] / 1000) if hold is not None else None  # 百萬
+    hold_value_m = jround(hold * a["close"] / 1000) if hold is not None else None  # 百萬
     return {
         "code": a["code"], "name": a["name"],
         "net_amt_k": amt, "net_lots": net,
@@ -172,23 +194,29 @@ def _inst_row(a: dict, side: str) -> dict:
 
 
 def page_inst(agg: dict, side: str) -> dict:
-    """投信/外資進出頁：買超/賣超 各 Top30，排行 A(持股變動率)/B(買賣超金額)。"""
+    """投信/外資進出頁：買超/賣超 各 Top30，排行 A(持股變動率)/B(買賣超金額)。
+
+    所有排行的排序鍵都帶次鍵 `code`：主鍵同值時（佔成交量常見整數比，如 1.0）
+    若不指定次鍵，排名取決於語言的走訪順序——Python dict 依 meta.stocks 插入序，
+    JS 物件則把「像整數的鍵」（2330）排在字串鍵（00637L）之前並依數值遞增。
+    同一檔資料在後端預算與前端聚合會選出不同的 Top30 成員（非只是順序）。
+    """
     rows = [a for a in agg.values() if a[f"{side}_net"] != 0]
     buy = [r for r in rows if r[f"{side}_net"] > 0]
     sell = [r for r in rows if r[f"{side}_net"] < 0]
 
     def topA(lst):  # 持股變動率（|net|÷發行張數）
         scored = [r for r in lst if r["issued_lots"]]
-        scored.sort(key=lambda a: abs(a[f"{side}_net"]) / a["issued_lots"], reverse=True)
+        scored.sort(key=lambda a: (-abs(a[f"{side}_net"]) / a["issued_lots"], a["code"]))
         return [_inst_row(a, side) for a in scored[:30]]
 
     def topB(lst):  # 買賣超金額
-        lst = sorted(lst, key=lambda a: abs(a[f"{side}_amt"]), reverse=True)
+        lst = sorted(lst, key=lambda a: (-abs(a[f"{side}_amt"]), a["code"]))
         return [_inst_row(a, side) for a in lst[:30]]
 
     def topV(lst):  # 佔成交量（|net|÷成交量）
         scored = [r for r in lst if r["vol"]]
-        scored.sort(key=lambda a: abs(a[f"{side}_net"]) / a["vol"], reverse=True)
+        scored.sort(key=lambda a: (-abs(a[f"{side}_net"]) / a["vol"], a["code"]))
         return [_inst_row(a, side) for a in scored[:30]]
 
     return {
@@ -204,7 +232,7 @@ def page_etf(agg: dict) -> dict:
         return a["code"][-1] in ("B", "D", "T") or "債" in a["name"]
 
     def mktcap_k(a):
-        return round(a["issued_lots"] * a["close"]) if a["issued_lots"] else 0
+        return jround(a["issued_lots"] * a["close"]) if a["issued_lots"] else 0
 
     def stats(group):
         return {
@@ -222,7 +250,7 @@ def page_etf(agg: dict) -> dict:
 
     def share(a, tag):  # 法人佔成交比重 = (買張+賣張)/(2×成交張)
         v = a["vol"]
-        return round((a[f"{tag}_buy"] + a[f"{tag}_sell"]) / (2 * v) * 100, 2) if v else None
+        return jround((a[f"{tag}_buy"] + a[f"{tag}_sell"]) / (2 * v) * 100, 2) if v else None
 
     def shares(a):
         return {"f_share": share(a, "f"), "t_share": share(a, "t"), "d_share": share(a, "d")}
@@ -238,8 +266,8 @@ def page_etf(agg: dict) -> dict:
 
     def mktcap_row(a):
         mc = mktcap_k(a)
-        f_val = round(a["f_shares"] * a["close"]) if a["f_shares"] is not None else 0
-        pct = lambda v: round(v / mc * 100, 2) if mc else None  # noqa: E731
+        f_val = jround(a["f_shares"] * a["close"]) if a["f_shares"] is not None else 0
+        pct = lambda v: jround(v / mc * 100, 2) if mc else None  # noqa: E731
         # 佝比＝持股市值/總市值。外資官方準；投信對 ETF 失真、自營無來源 → 一律 None（顯「—」）。
         # 其他＝市值−外資持股市值（含投信/自營/散戶等，因投信無法可靠拆分）。
         return {"code": a["code"], "name": a["name"], "mktcap_k": mc,
@@ -248,8 +276,8 @@ def page_etf(agg: dict) -> dict:
                 "f_share": pct(f_val), "t_share": None, "d_share": None,
                 "chg_pct": a["chg_pct"]}
 
-    def top(lst, key):
-        return sorted(lst, key=key, reverse=True)[:20]
+    def top(lst, key):  # 次鍵 code：同值時與前端選出同一批（見 page_inst docstring）
+        return sorted(lst, key=lambda a: (-key(a), a["code"]))[:20]
 
     return {
         "stats": {"all": stats(etfs), "nonbond": stats(nonbond), "bond": stats(bond)},
@@ -272,12 +300,12 @@ def page_sync(agg: dict) -> dict:
         return {"code": a["code"], "name": a["name"],
                 "t_amt_k": a["t_amt"], "t_net": a["t_net"],
                 "f_amt_k": a["f_amt"], "f_net": a["f_net"],
-                "sum_amt_k": a["t_amt"] + a["f_amt"], "sum_net": round(a["t_net"] + a["f_net"], 1),
+                "sum_amt_k": a["t_amt"] + a["f_amt"], "sum_net": jround(a["t_net"] + a["f_net"], 1),
                 "strength_k": strength, "chg_pct": a["chg_pct"]}
 
     # 依同步強度排序（雙方都重押的真共識優先；與對作頁一致）
-    sb = sorted((sync_row(a) for a in sync_buy), key=lambda r: r["strength_k"], reverse=True)[:30]
-    ss = sorted((sync_row(a) for a in sync_sell), key=lambda r: r["strength_k"], reverse=True)[:30]
+    sb = sorted((sync_row(a) for a in sync_buy), key=lambda r: (-r["strength_k"], r["code"]))[:30]
+    ss = sorted((sync_row(a) for a in sync_sell), key=lambda r: (-r["strength_k"], r["code"]))[:30]
 
     return {"sync_buy": sb, "sync_sell": ss}
 
@@ -297,8 +325,8 @@ def page_oppose(agg: dict) -> dict:
                 "strength_k": strength, "chg_pct": a["chg_pct"]}
 
     # 依對作強度排序（雙方都重押的真分歧優先）
-    fb = sorted((row(a) for a in f_buy_t_sell), key=lambda r: r["strength_k"], reverse=True)[:30]
-    fs = sorted((row(a) for a in f_sell_t_buy), key=lambda r: r["strength_k"], reverse=True)[:30]
+    fb = sorted((row(a) for a in f_buy_t_sell), key=lambda r: (-r["strength_k"], r["code"]))[:30]
+    fs = sorted((row(a) for a in f_sell_t_buy), key=lambda r: (-r["strength_k"], r["code"]))[:30]
     return {"f_buy_t_sell": fb, "f_sell_t_buy": fs}
 
 
@@ -342,10 +370,11 @@ def build_view(dates: list[str], docs: dict, meta: dict, n: int) -> dict:
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # argv 可由呼叫端（run_daily / verify_daily）明確傳空清單，避免吃到上層的 CLI 參數
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-futures", action="store_true", help="略過期貨卡（離線測試用）")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.no_futures:
         global foreign_futures_card
         foreign_futures_card = lambda *a, **k: None  # noqa: E731
