@@ -121,16 +121,21 @@ GitHub Pages
 
 - **全市場單日查詢用 `start_date`=`end_date`**，不是 `date=`（FinMind `date=` 回 400）。
 - **逐檔法人** `TaiwanStockInstitutionalInvestorsBuySell`（長格式，buy/sell 單位**股**÷1000=張）：
-  外資=`Foreign_Investor`+`Foreign_Dealer_Self`、投信=`Investment_Trust`、自營=`Dealer_self`+`Dealer_Hedging`(+`Dealer`)。**只存 net（買賣超）**，無逐檔買/賣分項。已驗證與證交所 T86 完全一致。
+  外資=`Foreign_Investor`+`Foreign_Dealer_Self`、投信=`Investment_Trust`、自營=`Dealer_self`+`Dealer_Hedging`(+`Dealer`)。已驗證與證交所 T86 完全一致。
+  daily schema 除 net 外**已存 f/t/d 的 buy/sell 分欄**（由 `src/rebuild_daily.py` 升序回補），見下方 daily schema 行。
+  （2026-07-26 更正：原寫「只存 net，無逐檔買/賣分項」，與 `data/daily/20260724.json` 實際 cols 不符。）
 - **買賣超金額**（逐檔無原生金額欄）= `net張 × 收盤價`（千元），已用規格 sample 與 T86 驗證。
 - **股價** `TaiwanStockPrice`：`Trading_Volume`(股÷1000=張)、`Trading_money`(元÷1000=千元)、`spread`=漲跌價，chg_pct=spread/(close−spread)×100。
 - **外資持股** `TaiwanStockShareholding`：`ForeignInvestmentShares`(÷1000)、`ForeignInvestmentSharesRatio`(%)。**`NumberOfSharesIssued` 是發行股數**（現值）。
 - **投信庫存累計**：`inv(t)=max(0, inv(t-1)+t_net)`，種子來自 `baseline_20260430.json`；≤2026-04-30 為 null。backfill **必須升序**處理。
 - **發行張數 issued_lots**：優先用 `TaiwanStockShareholding.NumberOfSharesIssued`（現值，pipeline 每日更新；補上 baseline 後新上市標的如主動式 ETF），baseline 為備援。約 591 檔（多為無外資持股申報的債券 ETF/冷門股）兩者皆無 → issued_lots=None → 市值算不出。
 - **市場三大法人卡**（`totals.json`）：**上市**=證交所 `BFI82U`（`https://www.twse.com.tw/rwd/zh/fund/BFI82U?dayDate=YYYYMMDD&type=day&response=json`），**上櫃**=櫃買 `https://www.tpex.org.tw/www/zh-tw/insti/summary?type=Daily&date=YYYY/MM/DD&response=json`（用「合計」列）。**不用** FinMind 的 `TaiwanStockTotalInstitutionalInvestors`（它在某些日把投信修訂成與官方/自身逐檔不一致的值）。TWSE/TPEx 偶發「線上人數過多」亂 stat 需重試、間隔拉長（6-8s）。TPEx 列名有全形空格前綴、外資列叫「外資及陸資(不含自營商)」。
+- **三大法人合成規則**（中文列名，比對前先 strip 上條說的全形空格）：外資=「外資及陸資(不含外資自營商)」+「外資自營商」、投信=「投信」、自營=「自營商(自行)」+「自營商(避險)」。**TPEx 的外資列名與 TWSE 不同**（少「外資」二字，見上條），硬編同一組列名會漏抓。
+- **上條「某些日不一致」的具體實例**：2026-06-12 `TaiwanStockTotalInstitutionalInvestors` 把投信修訂成 129 億，官方 BFI82U 為 142.3 億——這是改用 BFI82U 的直接原因。
+- **totals.json schema**＝`{dates:[…], rows:{"YYYY-MM-DD":{tse:{f/t/d 各 _buy_k/_sell_k/_net_k + turnover_k}, otc:{同}, taiex:float}}}`（千元）。**後端不存「合計」列**，前端 `computeTot` 自行 tse+otc 相加。
 - **期貨** `TaiwanFuturesInstitutionalInvestors`：外資台指期未平倉淨額 = `long_open_interest_balance_volume − short_...`，金額÷1000。已回補 65 日。
 - **代號正規化**：baseline 代號可能去前導 0（`50`↔canonical `0050`），對齊試原碼與 `lstrip('0')`。
-- **is_etf**：代號 `00` 開頭。**ETF 債券/平衡型判別**：名稱含「債」**或**代號結尾 **B**(被動債)/**D**(主動債)/**T**(平衡)，其餘股票型。
+- **is_etf**：代號 `00` 開頭（**含字母後綴**如 `00631L`、`00400A`，勿用純數字判斷）。**ETF 債券/平衡型判別**：名稱含「債」**或**代號結尾 **B**(被動債)/**D**(主動債)/**T**(平衡)，其餘股票型——FinMind 的 `industry_category` **不區分債券型**，所以只能用這組 heuristic。
 - **meta.json 不可有 NaN**（瀏覽器 `JSON.parse` 會炸）：build_meta 已過濾 NaN issued_lots 為 null；重建 meta 時**保留既有 calendar**（別清掉）。
 
 ## 前端（index.html，單一檔，vanilla JS）
@@ -148,7 +153,7 @@ GitHub Pages
 ## 外資買賣超 tab（市場別月/年歷史，2026-06 新增）
 
 - **資料**：`data/foreign_history.json`＝`{latest_date, monthly:{"YYYY-MM":{tse:{buy_k,sell_k,net_k},otc:{...}|null}}, daily:{近30交易日}}`（千元）。年總/本週/上週/近5日由前端 `renderForeignFlows()` 聚合，合計＝tse+otc，OTC佔比＝OTC總量÷合計總量。
-- **資料源決策（重要）**：**棄用 CMoney 附件**——附件 2026 月值與官方 TWSE 差 ~3 倍且 net 正負相反（附件像更早年份的真實規模；本資料集 2026 市場本身放大 ~2.3×）。改用**官方**：上市＝FinMind `TaiwanStockTotalInstitutionalInvestors`（外資＝Foreign_Investor+Foreign_Dealer_Self，源自證交所；淨額與官方 BFI82U 65 天僅 2 天差、最大 21 億；近 65 天再用 totals.json 官方覆蓋）；上櫃＝TPEx Daily 逐日回補（`_otc_daily.json`，2024-01→2026-03 共 525 天）+ totals.json 近期。**TWSE BFI82U 只支援 type=day**（month 回 HTML、year 回無資料）；**TPEx type=Monthly 忽略 date 只回當月**——所以歷史只能逐日。OTC佔比 13-18%，與附件歷史一致（方法學交叉驗證）。
+- **資料源決策（重要）**：**棄用 CMoney 附件**——附件 2026 月值與官方 TWSE 差 ~3 倍且 net 正負相反（附件像更早年份的真實規模；本資料集 2026 市場本身放大 ~2.3×；另附件年份標籤 **+1 錯置**、gross buy/sell 偶有同額偏移但 net 可抵銷）。改用**官方**：上市＝FinMind `TaiwanStockTotalInstitutionalInvestors`（外資＝Foreign_Investor+Foreign_Dealer_Self，源自證交所；淨額與官方 BFI82U 65 天僅 2 天差、最大 21 億；近 65 天再用 totals.json 官方覆蓋）；上櫃＝TPEx Daily 逐日回補（`_otc_daily.json`，2024-01→2026-03 共 525 天）+ totals.json 近期。**TWSE BFI82U 只支援 type=day**（month 回 HTML、year 回無資料）；**TPEx type=Monthly 忽略 date 只回當月**——所以歷史只能逐日。OTC佔比 13-18%，與附件歷史一致（方法學交叉驗證）。
 - **前端**：tab=`foreignflows`，獨立歷史表（凍結「期間」欄 `.flbl` 118px、年列 `.yrow`、分節列 `.srow`），不吃 mode/區間。當月列標「N月（截至 MM/DD）」。Excel 多一張「外資買賣超」工作表（A3 橫向，`xlSheet(wb,name,{a3:true,land:true})`）。
 
 ## 類股資金流（2026-06-28 新增，後端＋前端完成）
@@ -192,7 +197,8 @@ index.html  taiwan-flows-spec_V1.md
 
 **改動 `budget.py`/`sectors.py`/`index.html` 的聚合邏輯時**：這是同一套口徑的兩份實作（單日/近N日走後端預算，自訂區間/本週/上週/上月走前端聚合），**改一邊就要改另一邊**，並跑 `python tests/parity.py --n 1 5 10 20 65` 確認零差異。四捨五入一律用 `budget.jround`（JS `Math.round` 語意），排序一律帶次鍵（`code`／類股用 `sector`），`chg_pct` 的寫法固定 `c/base*100-100`——這三點都是實際踩過的漂移。
 
-daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct`（張/千元/%）。
+daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct,f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（張/千元/%）。
+（2026-07-26 更正：補上末尾 6 個 buy/sell 欄，以 `data/daily/20260724.json` 實際 cols 為準。）
 
 ## 2026-06-14 大指令（5 部分）— 全部完成
 
@@ -260,5 +266,5 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - **未做（2026-07-25 評估時明確排除）**：三個 repo（taiwan-flows / taiwan-flow-live-v2 / taiwan-stock-news）各有一份 FinMind client，token 載入、重試、節流各寫一次、行為不一致（例如非交易日 400 只有 taiwan-flows 會炸紅）。要共用需先有套件/vendoring 機制，跨 repo 改動風險高於收益，暫不動。
 - **觀察名單**：每個交易日 commit 約 4MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB）。目前靠 git delta 壓縮還撐得住，真要處理最省事的是 `sector_ranges` 不落 git、區間 drill-down 改前端即時聚合（`runCustomRange` 那條路徑已存在且有 parity 守門）。
 - 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
-- 逐檔表只有買賣超「淨額」，無買/賖分項（FinMind 有，但 daily schema 未存）；要的話需加欄位 + 重跑回補。
+- ~~逐檔表只有買賣超「淨額」，無買/賣分項；要的話需加欄位 + 重跑回補。~~ **此項已完成**：daily schema 末尾已有 `f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（2026-07-26 核對 `data/daily/20260724.json` 實際 cols 確認，非待辦）。
 - GitHub Actions 在美國 runner 抓 TWSE/TPEx 偶爾節流；totals.py 已內建重試，若某天漏抓重跑 `backfill_market.py`。
