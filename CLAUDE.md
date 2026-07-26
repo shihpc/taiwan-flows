@@ -1,5 +1,36 @@
 # taiwan-flows — 開發接軌文件（給新 Session / 新對話）
 
+<!-- CANON:BEGIN v1 -->
+<!-- 唯一事實來源＝shihpc/claude-harness 的 CANON.md。以下區塊在五個 repo 的 CLAUDE.md 頂端
+     有 byte-identical 逐字副本，由各 repo 的 .github/workflows/canon.yml 守門（比對 sha256）。
+     改動流程：先改 claude-harness/CANON.md → 跑 tools/sync_canon.py 同步五份 → 更新守門 hash。
+     不要只改單一 repo，CI 會擋下來。 -->
+
+## 通用工作鐵律（五個 repo 逐字相同，勿單獨修改）
+
+1. **機密**：token／金鑰一律走 `.env` 或 Actions secret，絕不寫進任何會 commit 的檔案、log 或
+   對話輸出。commit 前用 `git diff --staged` 檢查有無夾帶金鑰樣式字串（`sk-ant-`、`ghp_`、`eyJ` 開頭）。
+2. **指揮官不下場**：掃 repo、通讀 >300 行的檔、一次讀 >3 個檔、查網頁研究、批次改檔、
+   驗收改過的東西——這六類一律派 subagent，主對話只收結論＋`檔案:行號`。
+3. **先寫驗收條件再動手**：動手前先寫下目標專案完整路徑＋怎樣算完成＋怎麼驗。改完派
+   fresh-context subagent 驗收——**改東西的 agent（含主對話自己）不得擔任驗收者**。
+4. **不確定不亂說**：陳述事實（尤其技術細節、數字、外部服務的限制與行為）要嘛附佐證（官方
+   文件、實測、`檔案:行號`），要嘛明說「這點我不確定，需要查證」，不可憑印象當確定講。
+   區分「已驗證事實」與「推測」，推測要標明。
+5. **一次只做一件事**：只做明確要求的那件事，做完給簡短結果；少主動丟一堆延伸提案。
+6. **完成的定義**：驗收條件逐條打勾＋fresh-context subagent 驗過＋產物在使用者拿得到的位置。
+   **沒實跑過不算完成**。涉及部署者另需 push＋部署 workflow 成功＋**線上驗證本次變更的具體內容**
+   （破快取 raw URL／curl／瀏覽器實查），只寫在本機不算完成。
+7. **push 前**：先 `git fetch`；`git log --oneline main..origin/main` 非空必須先看內容（訊息／
+   時間戳／diff）。一般 push → rebase 整合，嚴禁直接覆蓋；force push 前若 origin 領先的 commit
+   是真實新工作 → 停下來問，授權「這次 force push」不等於授權蓋掉 origin 所有領先 commit。
+8. **新指標／訊號先問有沒有回測依據**，沒有就先驗證再上線；不做預測宣稱，只描述歷史統計
+   傾向與局限。
+9. **語言**：對話與文件用繁體中文；程式碼註解可中文，identifier 用英文。
+
+> 判準細則、派工模板、教訓簿見 `shihpc/claude-harness`（private）。雲端 session 需 add_repo 才讀得到。
+<!-- CANON:END v1 -->
+
 三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值 / 外資買賣超** 六個分頁。
 盤後資料 → GitHub Actions 每日抓取與預算 → commit JSON → GitHub Pages 純前端秒載。
 
@@ -156,6 +187,7 @@ data/  daily/YYYYMMDD.json(逐檔20欄) futures/ meta.json totals.json
        industry_chain.json foreign_history.json status.json baseline_20260430.json
 index.html  taiwan-flows-spec_V1.md
 .github/workflows/  daily.yml(21:19 台北) verify.yml(23:40 台北) parity.yml(push 時)
+                    canon.yml(push 時，守 CLAUDE.md 頂端 CANON 區塊)
 ```
 
 **改動 `budget.py`/`sectors.py`/`index.html` 的聚合邏輯時**：這是同一套口徑的兩份實作（單日/近N日走後端預算，自訂區間/本週/上週/上月走前端聚合），**改一邊就要改另一邊**，並跑 `python tests/parity.py --n 1 5 10 20 65` 確認零差異。四捨五入一律用 `budget.jround`（JS `Math.round` 語意），排序一律帶次鍵（`code`／類股用 `sector`），`chg_pct` 的寫法固定 `c/base*100-100`——這三點都是實際踩過的漂移。

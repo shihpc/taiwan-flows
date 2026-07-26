@@ -1,0 +1,49 @@
+# 由 shihpc/claude-harness 的 tools/sync_canon.py 分發，請勿只改單一 repo。
+# 守門目的：CLAUDE.md 頂端的 CANON 區塊在五個 repo 逐字相同，防止有人只改一份就忘了同步。
+# 沿用 taiwan-flows/parity.yml 的既有原則：不吃任何 secret。
+name: canon
+
+on:
+  push:
+    paths:
+      - 'CLAUDE.md'
+      - '.github/workflows/canon.yml'
+  pull_request:
+    paths:
+      - 'CLAUDE.md'
+      - '.github/workflows/canon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canon:
+    runs-on: ubuntu-latest
+    env:
+      EXPECT: 5f02d0ad089a963fa4532c011500d3ba33149931228fd9e308c70d6adcf00dfd
+    steps:
+      - uses: actions/checkout@v4
+      - name: 驗 CLAUDE.md 的 CANON 區塊未被單獨修改
+        run: |
+          python - <<'PY'
+          import hashlib, os, re, sys
+
+          src = open('CLAUDE.md', encoding='utf-8').read()
+          m = re.search(r'<!-- CANON:BEGIN v1 -->.*?<!-- CANON:END v1 -->', src, re.S)
+          if not m:
+              sys.exit('FAIL: CLAUDE.md 找不到 CANON:BEGIN v1 … CANON:END v1 區塊')
+
+          got = hashlib.sha256(m.group(0).encode('utf-8')).hexdigest()
+          exp = os.environ['EXPECT']
+          if got != exp:
+              sys.exit(
+                  'FAIL: CANON 區塊與正本不一致\n'
+                  f'  預期 {exp}\n'
+                  f'  實際 {got}\n'
+                  '這段鐵律在五個 repo 逐字相同。正確改法：改 shihpc/claude-harness 的\n'
+                  'CANON.md，跑 python tools/sync_canon.py 同步五份並更新守門 hash，\n'
+                  '五個 repo 一起送出。不要只改這一個 repo。'
+              )
+          print(f'OK: CANON v1 一致（{got[:12]}）')
+          PY
