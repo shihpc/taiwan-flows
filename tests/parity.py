@@ -72,6 +72,101 @@ def diff(py, js, path: str, out: list[str], limit: int) -> None:
         out.append(f"{path}: Python={py!r} JS={js!r}")
 
 
+def build_tie_agg(dates, docs, meta) -> tuple[dict, dict]:
+    """人造「處處同分」的 agg，專打排序 tie-break。
+
+    為什麼需要：真實資料在多數排行的主鍵上沒有 tie，把 budget.py 的次鍵 `code`
+    整個拿掉，parity 的五個視窗照樣全綠——8 個排序站點只有「佔成交量」那個
+    因為常出現整數比而測得出來。同分時的排名取決於語言的物件走訪順序
+    （JS 把像整數的鍵排在字串鍵前並依數值遞增，Python dict 依 meta.stocks 插入序），
+    所以必須自己造出同分才驗得到。
+
+    做法：拿真實 agg 當模板（確保欄位齊全、型別正確），只覆蓋參與排序的欄位為定值。
+    代號刻意混三種形狀：像整數的（2330）、有前導 0 的（0050）、帶字母的（00637L）。
+    """
+    real = budget.aggregate(dates, docs, meta, 1)
+    picked, seen = {}, {"int": 0, "zero": 0, "alpha": 0}
+    for code, a in real.items():
+        if code.isdigit() and not code.startswith("0"):
+            kind = "int"
+        elif code.isdigit():
+            kind = "zero"
+        else:
+            kind = "alpha"
+        if seen[kind] >= 8:
+            continue
+        seen[kind] += 1
+        picked[code] = dict(a)
+        if sum(seen.values()) >= 24:
+            break
+
+    tie_agg, sectors_map = {}, {}
+    for i, (code, a) in enumerate(picked.items()):
+        # 一半當買方一半當賣方；ETF 與非 ETF 各半，讓 page_etf 的兩個 top 也吃到同分
+        sign = 1 if i % 2 == 0 else -1
+        a.update({
+            "close": 100.0, "vol": 1000, "amt": 500000, "issued_lots": 2000.0,
+            "chg_pct": 1.0, "bias20": 2.0,
+            "f_net": 100.0 * sign, "f_amt": 50000 * sign,
+            "t_net": 100.0 * sign, "t_amt": 50000 * sign,
+            "d_net": 100.0 * sign, "d_amt": 50000 * sign,
+            "f_buy": 10.0, "f_sell": 10.0, "t_buy": 10.0, "t_sell": 10.0,
+            "d_buy": 10.0, "d_sell": 10.0,
+            "f_buy_amt": 1000, "f_sell_amt": 1000, "t_buy_amt": 1000,
+            "t_sell_amt": 1000, "d_buy_amt": 1000, "d_sell_amt": 1000,
+            "t_inv": 500.0, "f_shares": 500.0, "f_pct": 25.0,
+            "is_etf": i % 3 == 0,          # 三分之一當 ETF
+            # 每檔各自一個類股，且金額同分 → 類股摘要的排序完全由 tie-break 決定。
+            # 用共用類股名不行：兩邊「第一次遇到某類股」的順序若相同，沒帶次鍵也會通過。
+            "industry": f"測試類股{code}",
+        })
+        # 對作頁要兩個方向都有資料才驗得到：i%4==0 造 外資買·投信賣、
+        # i%4==3 造 外資賣·投信買（只翻其中一邊的話另一個清單會是空的，測不到）
+        if i % 4 in (0, 3):
+            a["t_net"], a["t_amt"] = -a["t_net"], -a["t_amt"]
+        tie_agg[code] = a
+        sectors_map[code] = {"i": [f"測試鏈{code}"], "s": [], "p": []}
+    return tie_agg, sectors_map
+
+
+def check_ties(td: Path, max_report: int) -> list[str]:
+    """對人造同分資料比對前後端的排序結果。"""
+    dates, docs = budget.load_daily()
+    meta = json.loads((ROOT / "data" / "meta.json").read_text(encoding="utf-8"))
+    tie_agg, chain_raw = build_tie_agg(dates, docs, meta)
+
+    agg_path, chain_path, out_path = td / "tie_agg.json", td / "tie_chain.json", td / "tie_js.json"
+    agg_path.write_text(json.dumps(tie_agg), encoding="utf-8")
+    chain_path.write_text(json.dumps(chain_raw), encoding="utf-8")
+
+    r = subprocess.run(
+        ["node", str(ROOT / "tests" / "extract_js.mjs"), str(out_path), "1",
+         "--agg", str(agg_path), "--chain", str(chain_path)],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"✗ node 端失敗（ties）：\n{r.stderr}", file=sys.stderr)
+        sys.exit(2)
+    if r.stderr.strip():
+        print(f"  {r.stderr.strip()}")
+    js = json.loads(out_path.read_text(encoding="utf-8"))
+
+    py_pages = {
+        "etf": budget.page_etf(tie_agg),
+        "trust": budget.page_inst(tie_agg, "t"),
+        "foreign": budget.page_inst(tie_agg, "f"),
+        "sync": budget.page_sync(tie_agg),
+        "oppose": budget.page_oppose(tie_agg),
+    }
+    chain_map = {c: v["i"] for c, v in chain_raw.items()}
+    py_sectors = sectors.build_view(tie_agg, chain_map)
+
+    diffs: list[str] = []
+    diff(py_pages, js["pages"], "ties.pages", diffs, max_report)
+    diff(py_sectors["classifications"], js["sectors"]["classifications"],
+         "ties.sectors", diffs, max_report)
+    return diffs
+
+
 def run_js(n: int, out_path: Path) -> dict:
     r = subprocess.run(
         ["node", str(ROOT / "tests" / "extract_js.mjs"), str(out_path), str(n)],
@@ -102,6 +197,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, nargs="+", default=[1, 20],
                     help="要比對的視窗交易日數（預設 1 20）")
     ap.add_argument("--max-report", type=int, default=25, help="每個視窗最多列幾筆差異")
+    ap.add_argument("--no-ties", action="store_true", help="略過排序 tie-break 測試")
     args = ap.parse_args()
 
     dates, docs = budget.load_daily()
@@ -133,6 +229,17 @@ def main() -> None:
                     print(f"    {d}")
             else:
                 print(f"✓ n={n} 完全相符（agg {len(py['agg'])} 檔 + 四頁 + 類股摘要）")
+
+        # 排序 tie-break：真實資料多數排行沒有同分，必須另外造
+        if not args.no_ties:
+            tie_diffs = check_ties(Path(td), args.max_report)
+            if tie_diffs:
+                failed = True
+                print(f"\n✗ 排序 tie-break 有 {len(tie_diffs)}+ 筆差異（列前 {args.max_report}）：")
+                for d in tie_diffs[:args.max_report]:
+                    print(f"    {d}")
+            else:
+                print("✓ 排序 tie-break 完全相符（人造同分資料，四頁 + 類股摘要）")
 
     if failed:
         print("\n前後端口徑已漂移：修正 budget.py/sectors.py 或 index.html 使兩邊一致。")

@@ -35,6 +35,20 @@ logger = logging.getLogger("verify_daily")
 
 ICON = {"ok": "✓", "warn": "⚠", "critical": "✗"}
 
+# 退出碼語意（verify.yml 依此決定要不要亮紅）：
+#   0 = 驗過且沒事（ok/warn）
+#   1 = 價格事故（critical，重抓後仍未修復）→ 要通知
+#   2 = 這次驗不了（權威源查詢失敗 unknown／無 daily 檔／健檢本身丟例外）
+#       ——不是資料錯，別報成 critical
+EXIT_OK, EXIT_CRITICAL, EXIT_UNUSABLE = 0, 1, 2
+
+
+def _write_status(d: str, r: dict) -> None:
+    """只更新 status.json 的 healthcheck 欄，其餘（date/status/note）沿用當日排程寫的值。"""
+    st = run_daily.read_status()
+    run_daily.write_status(st.get("date", d), st.get("status", "ok"),
+                           st.get("note", ""), healthcheck=r)
+
 
 def _log_result(prefix: str, r: dict) -> None:
     sev = r.get("severity", "?")
@@ -54,28 +68,38 @@ def main(argv: list[str] | None = None) -> None:
     d = args.date or healthcheck.latest_daily_date()
     if not d:
         logger.error("無 daily 檔可驗證")
-        sys.exit(2)
+        sys.exit(EXIT_UNUSABLE)
 
     logger.info(f"=== 延後驗證 {d} ===")
-    r = healthcheck.check(d)
+    try:
+        r = healthcheck.check(d)
+    except Exception as e:   # 缺 token、網路層例外等：屬「無法驗證」，不是價格事故
+        logger.error(f"健檢無法執行：{e}")
+        _write_status(d, {"date": d, "severity": "unknown", "note": f"健檢無法執行：{e}"})
+        sys.exit(EXIT_UNUSABLE)
     _log_result("", r)
 
     if r["severity"] == "critical" and not args.no_fix:
         logger.error(f"⚠ {d} 收盤價疑似未 settle（{r.get('mismatch')} 檔不符）→ 重抓 pipeline")
         r = healthcheck.remediate(d)      # 重抓該日 pipeline 後再驗
         _log_result("重抓後 ", r)
-        if r["severity"] in ("ok", "warn"):
-            logger.info("重抓已修復 → 重算 latest/ranges/foreign/sectors")
-            run_daily.rebuild_products()
-        else:
+        # 不論有沒有修好都要重算。remediate() 內部已經呼叫 run_date() **覆寫了
+        # data/daily/<d>.json**，若這裡因為「仍 critical」就跳過重算，latest/
+        # latest_ranges/sector_* 仍是舊 daily 算出來的 → verify.yml 的 Commit & push
+        # 是無條件執行的，會把「新 daily + 舊衍生產出」這種互相矛盾的狀態推上 main，
+        # 比單純沒修好更糟。維持「衍生產出永遠由當前 daily 算出」這個不變式。
+        logger.info("重抓後重算 latest/ranges/foreign/sectors（維持與 daily 一致）")
+        run_daily.rebuild_products()
+        if r["severity"] not in ("ok", "warn"):
             logger.error("重抓後仍 critical：FinMind 可能尚未 settle，明日排程或手動再驗")
 
-    # 只更新 status.json 的 healthcheck 欄，其餘（date/status/sources）沿用當日排程寫的值
-    st = run_daily.read_status()
-    run_daily.write_status(st.get("date", d), st.get("status", "ok"),
-                           st.get("note", ""), healthcheck=r)
+    _write_status(d, r)
     logger.info(f"=== 驗證完成，status.json.healthcheck.severity={r['severity']} ===")
-    sys.exit(0 if r["severity"] in ("ok", "warn") else 1)
+    # 退出碼三分：讓 workflow 能區分「價格事故」與「這次驗不了」，
+    # 否則 FinMind 掛掉也會被報成 critical，久了真的 critical 就沒人看了。
+    if r["severity"] in ("ok", "warn"):
+        sys.exit(EXIT_OK)
+    sys.exit(EXIT_CRITICAL if r["severity"] == "critical" else EXIT_UNUSABLE)
 
 
 if __name__ == "__main__":
