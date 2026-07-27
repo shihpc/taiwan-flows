@@ -49,12 +49,15 @@ jobs:
         id: verify
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          # 經由 env 傳入，不要把 inputs 直接內插進 shell（dispatch 輸入可注入指令）
+          IN_DATE: ${{ github.event.inputs.date }}
+          IN_NO_FIX: ${{ github.event.inputs.no_fix }}
         run: |
           args=""
-          [ -n "${{ github.event.inputs.date }}" ] && args="--date ${{ github.event.inputs.date }}"
-          [ "${{ github.event.inputs.no_fix }}" = "true" ] && args="$args --no-fix"
-          # 仍 critical 時 verify_daily 回 1；先記下來，等 commit 完再決定 job 成敗，
-          # 免得驗證結果與已修好的資料因為 job 中止而沒被推上去
+          [ -n "$IN_DATE" ] && args="--date $IN_DATE"
+          [ "$IN_NO_FIX" = "true" ] && args="$args --no-fix"
+          # 退出碼先記下來、等 commit 完再決定 job 成敗，免得驗證結果與已修好的
+          # 資料因為 job 中止而沒被推上去（0=沒事 / 1=價格事故 / 2=這次驗不了）
           set +e
           python src/verify_daily.py $args
           echo "rc=$?" >> "$GITHUB_OUTPUT"
@@ -79,9 +82,19 @@ jobs:
           done
           echo "::error::push 重試 5 次仍失敗"; exit 1
 
-      - name: Fail if still critical
-        if: steps.verify.outputs.rc != '0'
+      # rc=2（權威源查不到／無 daily 檔／健檢自己丟例外）只當警告：那是「這次驗不了」，
+      # 不是價格事故。若跟 critical 一樣亮紅，FinMind 每掛一次就叫一次狼來了，
+      # 真的出事時就沒人看了。status.json.healthcheck.severity 會記成 unknown。
+      - name: Warn if verification could not run
+        if: steps.verify.outputs.rc == '2'
         run: |
-          echo "::error::收盤價健檢仍為 critical（重抓後未修復）——FinMind 可能尚未 settle，"
+          echo "::warning::本次無法完成收盤價驗證（權威源查詢失敗／無 daily 檔）——"
+          echo "::warning::不代表資料有問題；稍後可手動 workflow_dispatch 重驗。"
+
+      - name: Fail if still critical
+        if: steps.verify.outputs.rc == '1'
+        run: |
+          echo "::error::收盤價健檢仍為 critical（重抓後未修復）——FinMind 可能尚未 settle。"
+          echo "::error::衍生產出已跟著重抓後的 daily 重算（維持一致），但值仍可疑。"
           echo "::error::可稍後手動 workflow_dispatch 本 workflow，或跑 python src/verify_daily.py"
           exit 1

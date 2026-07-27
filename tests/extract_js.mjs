@@ -17,8 +17,14 @@ import vm from "node:vm";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = process.argv[2];
 const N = parseInt(process.argv[3] || "20", 10);
+// --agg <path>：不從 daily 算 agg，改吃現成的 agg（tests/parity.py --ties 用人造
+// 同分資料打排序 tie-break；真實資料在多數排行上沒有 tie，測不出次鍵有沒有生效）
+const AGG_ARG = process.argv.indexOf("--agg");
+const AGG_PATH = AGG_ARG > 0 ? process.argv[AGG_ARG + 1] : null;
+const CHAIN_ARG = process.argv.indexOf("--chain");
+const CHAIN_PATH = CHAIN_ARG > 0 ? process.argv[CHAIN_ARG + 1] : null;
 if (!OUT) {
-  console.error("用法：node tests/extract_js.mjs <out.json> <n>");
+  console.error("用法：node tests/extract_js.mjs <out.json> <n> [--agg a.json] [--chain c.json]");
   process.exit(2);
 }
 
@@ -71,6 +77,26 @@ new vm.Script(src).runInContext(sandbox);
 
 // ── 3. 準備與 Python 端相同的輸入 ───────────────────────────────
 const DATA = path.join(ROOT, "data");
+
+// --agg 模式：跳過 daily 載入與聚合，直接對給定的 agg 跑 jPage*（排序 tie-break 測試）
+if (AGG_PATH) {
+  const agg = JSON.parse(fs.readFileSync(AGG_PATH, "utf8"));
+  const chainMap = CHAIN_PATH ? JSON.parse(fs.readFileSync(CHAIN_PATH, "utf8")) : {};
+  fs.writeFileSync(OUT, JSON.stringify({
+    mode: "agg",
+    pages: {
+      etf: sandbox.jPageEtf(agg),
+      trust: sandbox.jPageInst(agg, "t"),
+      foreign: sandbox.jPageInst(agg, "f"),
+      sync: sandbox.jPageSync(agg),
+      oppose: sandbox.jPageOppose(agg),
+    },
+    sectors: sandbox.jPageSectors(agg, chainMap),
+  }));
+  console.error(`[extract_js] --agg 模式：${Object.keys(agg).length} 檔 → ${OUT}`);
+  process.exit(0);
+}
+
 const meta = JSON.parse(fs.readFileSync(path.join(DATA, "meta.json"), "utf8"));
 
 // dates 取自 data/daily 實際檔案（與 budget.load_daily 同源，非 meta.calendar）
