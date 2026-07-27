@@ -244,7 +244,10 @@
 <main id="main"><div class="loading">載入中…</div></main>
 <footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例）</footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<!-- defer：只有按「匯出 Excel」才用得到，不加會 render-blocking 把 latest.json 的請求
+     整個排在第三方 CDN 之後（實測 CDN 慢 2.5 秒，首屏 JSON 就晚 2.5 秒才發出），
+     首屏 JSON 從 1MB 砍到 150KB 的效果會被這一支抵銷掉。 -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{}, sectorLatest:null, sectorRanges:null,
@@ -329,7 +332,11 @@ const URL_RANGES="data/latest_ranges.json", URL_SECT_LATEST="data/sector_latest.
 const INFLIGHT={}, FAILED={};
 function lazyJson(url){
   if(FAILED[url]) return Promise.resolve(null);
-  if(!INFLIGHT[url]) INFLIGHT[url]=fetch(url,{cache:"no-cache"}).then(r=>r.json())
+  // 一定要看 r.ok：代理／CDN 的錯誤頁常常也是合法 JSON，只 catch 解析錯誤的話
+  // state.xxx 會被塞成 {error:...} 這種真值物件，FAILED 不會被設，後續取
+  // .windows[mode] 才炸，而且永遠卡住。
+  if(!INFLIGHT[url]) INFLIGHT[url]=fetch(url,{cache:"no-cache"})
+    .then(r=>{ if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
     .catch(e=>{ FAILED[url]=true; delete INFLIGHT[url]; return null; });
   return INFLIGHT[url];
 }
@@ -344,7 +351,9 @@ async function ensureSectorLatest(){
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
   if(["custom","thisweek","thismonth","lastweek","lastmonth"].includes(state.mode)) return state.customPages;
-  return state.ranges.windows[state.mode].pages;
+  // latest_ranges 載入失敗時 state.ranges 是 null，直接 .windows 會 TypeError，
+  // 之後點任何 tab 都是空白、非重新整理不可 → 回 null 讓 render 顯示錯誤訊息。
+  return state.ranges ? state.ranges.windows[state.mode].pages : null;
 }
 async function ensureSectorRanges(){
   if(!state.sectorRanges) state.sectorRanges = await lazyJson(URL_SECT_RANGES);
@@ -549,7 +558,10 @@ function renderSectors(tab){
   if(sv===undefined) return `<div class="loading">載入類股區間資料…</div>`;
   if(sv===null) return `<div class="loading">類股資金流支援 <b>單日 / 5 / 10 / 20 / 65日</b>；其他區間請改用上方模式。</div>`;
   if(!sv.classifications) return `<div class="loading">類股資料尚未產生（data/sector_*.json）</div>`;
-  if(classify==="chain" && !state.chainMap) ensureChainMap().then(render);  // 次產業 drill 需配對表
+  // 次產業 drill 需配對表。**務必帶 FAILED 短路**：載入失敗時 lazyJson 會回一個
+  // 已 resolve 的 null，沒有這個檢查就會 render → 打到這行 → .then(render) → …
+  // 形成無窮 microtask 迴圈，主執行緒餓死、整頁靜靜當掉（不噴 error、不重複發請求，最難查）。
+  if(classify==="chain" && !state.chainMap && !FAILED[URL_CHAIN]) ensureChainMap().then(render);
   const cls = sv.classifications[classify];
   const inv = state.sub[tab].inv, open = state.sub[tab].open;
   const list = (cls.investors[inv]||[]).filter(s=>s.net_amt_k!==0||s.net_lots!==0);
@@ -896,6 +908,9 @@ function render(){
   const pages = currentPages();
   updateFutbar();
   const main = document.getElementById("main");
+  if(!pages){ main.innerHTML =
+    `<div class="loading">區間資料載入失敗（data/latest_ranges.json），請重新整理；或先改用「單日」模式。</div>`;
+    fitScrollbox(); return; }
   let html="";
   if(state.tab==="foreign") html+=renderInst(pages.foreign,"foreign");
   else if(state.tab==="trust") html+=renderInst(pages.trust,"trust");
