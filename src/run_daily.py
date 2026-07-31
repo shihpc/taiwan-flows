@@ -37,6 +37,28 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 STATUS_PATH = DATA / "status.json"
 
 
+def target_trading_day() -> str:
+    """本次執行對應的目標交易日（台北 YYYY-MM-DD）。
+
+    daily.yml cron 排台北 21:19，主觸發是 live-v2 Worker 哨兵（台北 17:00–22:55）；
+    但 GitHub Actions 常延遲 1~3 小時，一旦延到隔日凌晨才啟動，直接用
+    `datetime.now(TPE)` 會把目標日滾成「隔天」——去抓一個還沒開盤的新交易日，
+    FinMind 當然無資料 → 誤標 `no_data`。
+
+    2026-08-01 01:10 的實例：status.json 寫 `{"date":"2026-08-01","status":"no_data"}`，
+    但同檔 `sources` 四項都是 `2026-07-31`（那是從既有資料檔讀出來的）——資料明明
+    是好的，狀態卻報無資料，前端右上角因此顯示「尚未開盤/非交易日」。
+
+    故凌晨啟動（hour < 12）時把目標交易日回推一天＝觸發當晚的交易日；21:19 準點或
+    小延遲（hour >= 12）則就是當日。與 postmkt `build_summary.py` 的 `slot_trading_day()`
+    同一套處理（該處 2026-07-17 已修，本處是同類 bug 的漏網）。
+    """
+    now = datetime.now(TPE)
+    if now.hour < 12:
+        return (now - timedelta(days=1)).date().isoformat()
+    return now.date().isoformat()
+
+
 def gather_sources() -> dict:
     """各資料源「最新有資料日」，給前端各卡/tab 標示資料源日期、偵測落後。"""
     src: dict[str, str] = {}
@@ -116,8 +138,11 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="交易日 YYYY-MM-DD（預設今天）")
     args = ap.parse_args(argv)
-    d = args.date or datetime.now(TPE).date().isoformat()
+    d = args.date or target_trading_day()
 
+    now = datetime.now(TPE)
+    if not args.date and d != now.date().isoformat():
+        logger.info(f"凌晨 {now:%H:%M} 啟動（Actions 延遲跨午夜），目標交易日回推為 {d}")
     logger.info(f"=== 每日排程 {d} ===")
     try:
         produced = run_date(d)

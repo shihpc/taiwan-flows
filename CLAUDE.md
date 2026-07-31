@@ -64,6 +64,15 @@
 
 **已量測、確認不必優化**：後端運算不是瓶頸——`load_daily` 2.5s、`aggregate` 0.3~0.8s/窗、`budget.main` 4.0s、`sectors.main` 3.6s。`budget` 與 `sectors` 各自重跑一次 load+5 窗（多花約 5s），相對 30 分鐘的 job 無意義，別為此增加耦合。
 - **近期重要修正/功能**（細節見下方各段）：
+  - **交易日判定跨午夜滾錯（2026-08-01 修）**：`run_daily.py` 原本 `d = args.date or
+    datetime.now(TPE).date()`，GitHub Actions 延遲跨午夜啟動時目標日滾成隔天，去抓還沒開盤
+    的交易日 → 誤標 `no_data`。現場：status.json 寫 `{"date":"2026-08-01","status":"no_data"}`
+    但同檔 `sources` 四項都是 `2026-07-31`（資料是好的，狀態卻報無資料，前端右上角顯示
+    「尚未開盤/非交易日」）。改用 `target_trading_day()`：`hour < 12` 時回推一天，
+    與 postmkt `build_summary.py` 的 `slot_trading_day()` 同一套（該處 2026-07-17 已修，
+    本 repo 是漏網的）。回歸測試 `tests/test_trading_day.py`（10 個邊界，免 token 免網路）。
+    ⚠️ 尚未處理：`daily.yml:54` 把 `no_data` 視為成功，會**靜默吞掉**這類誤判——
+    但「非交易日 400 優雅化」使用者請暫緩，故未動 exit code。
   - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
   - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
   - Excel：**auto-fit 自動欄寬**（消除 #######）、四張並排表字體 11、可選**匯出基準日**、各表標**資料源日期**、ETF市值表移投信/自營佔比。
