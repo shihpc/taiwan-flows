@@ -242,7 +242,7 @@
   </div>
 </div>
 <main id="main"><div class="loading">載入中…</div></main>
-<footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例）</footer>
+<footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例） <span id="siteVer" hidden></span></footer>
 
 <!-- defer：只有按「匯出 Excel」才用得到，不加會 render-blocking 把 latest.json 的請求
      整個排在第三方 CDN 之後（實測 CDN 慢 2.5 秒，首屏 JSON 就晚 2.5 秒才發出），
@@ -1440,6 +1440,36 @@ document.getElementById("infoClose").onclick = ()=>overlay.classList.remove("sho
 overlay.onclick = e=>{ if(e.target===overlay) overlay.classList.remove("show"); };
 
 boot();
+
+// ---------- 站台版本（footer）----------
+// 查本 repo main 最新 commit 短碼顯示於頁尾（如「版本 9a161ee」）。GitHub API 免金鑰
+// 60 req/hr/IP；四站同源（shihpc.github.io），sessionStorage key 各站獨立、快取一次/
+// 分頁工作階段；任何失敗一律靜默隱藏（不影響主功能）。注意語意：顯示 repo main 當前
+// 版本，GitHub Pages 部署延遲或瀏覽器快取舊頁時可能比載入中頁面新（分鐘級誤差可接受）。
+async function loadSiteVer(){
+  const el = document.getElementById("siteVer");
+  if (!el) return;
+  try{
+    const KEY = "tf_site_ver";
+    let v = null;
+    try{ v = JSON.parse(sessionStorage.getItem(KEY)); }catch(e){}
+    if (!v || !v.sha){
+      const r = await fetch("https://api.github.com/repos/shihpc/taiwan-flows/commits/main",
+                            { headers: { Accept: "application/vnd.github+json" } });
+      if (!r.ok) return;
+      const j = await r.json();
+      v = { sha: String(j.sha || "").slice(0, 7),
+            t: (j.commit && j.commit.committer && j.commit.committer.date) || "" };
+      try{ sessionStorage.setItem(KEY, JSON.stringify(v)); }catch(e){}
+    }
+    if (!v.sha) return;
+    const t = Date.parse(v.t);
+    const ts = isNaN(t) ? "" : new Date(t).toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).slice(0, 16);
+    el.textContent = `｜版本 ${v.sha}${ts ? `（${ts} 台灣）` : ""}`;
+    el.hidden = false;
+  }catch(e){ /* 靜默：版本列缺席不影響任何功能 */ }
+}
+loadSiteVer();
 </script>
 </body>
 </html>
