@@ -19,6 +19,12 @@ on:
       - "tests/**"
   workflow_dispatch: {}
 
+# 原本沒有 permissions 區塊（吃預設）。一旦顯式宣告，未列出的權限會全部降為 none，
+# 所以 actions/checkout 需要的 contents: read 必須一併寫出來。
+permissions:
+  contents: read
+  issues: write    # 失敗告警開 issue 用
+
 jobs:
   parity:
     runs-on: ubuntu-latest
@@ -40,3 +46,11 @@ jobs:
 
       - name: Parity（5 個視窗全比）
         run: python tests/parity.py --n 1 5 10 20 65
+
+      - name: Notify failure
+        # cancelled 也要告警：跑一半被取消（GitHub 端異常或誤按）同樣代表該場沒產出，
+        # 而 failure() 在 cancelled 時不成立（2026-07-24 postmkt pm 場靜默消失的教訓）
+        if: failure() || cancelled()
+        uses: ./.github/actions/notify-failure
+        with:
+          pipeline: taiwan-flows-parity

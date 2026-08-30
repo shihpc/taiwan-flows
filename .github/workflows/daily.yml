@@ -15,6 +15,7 @@ on:
 # 讓 GITHUB_TOKEN 能 push commit
 permissions:
   contents: write
+  issues: write    # 失敗告警開 issue 用
 
 concurrency:
   group: daily-flows
@@ -83,3 +84,11 @@ jobs:
             echo "遠端有更新或推送衝突，rebase 後重試 $i…"; sleep 5
           done
           echo "::error::push 重試 5 次仍失敗"; exit 1
+
+      - name: Notify failure
+        # cancelled 也要告警：跑一半被取消（GitHub 端異常或誤按）同樣代表該場沒產出，
+        # 而 failure() 在 cancelled 時不成立（2026-07-24 postmkt pm 場靜默消失的教訓）
+        if: failure() || cancelled()
+        uses: ./.github/actions/notify-failure
+        with:
+          pipeline: taiwan-flows-daily

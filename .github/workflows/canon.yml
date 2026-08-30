@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  issues: write    # 失敗告警開 issue 用
 
 jobs:
   canon:
@@ -47,3 +48,14 @@ jobs:
               )
           print(f'OK: CANON v1 一致（{got[:12]}）')
           PY
+
+      # 註：本 step 是各 repo 各自安裝（pipeline 名不同），不由 sync_canon.py 分發；
+      # sync_canon.py 只改本檔 EXPECT hash 那一行，不會覆蓋這段。正本在
+      # claude-harness/templates/notify-failure/action.yml。
+      - name: Notify failure
+        # cancelled 也要告警：跑一半被取消（GitHub 端異常或誤按）同樣代表該場沒產出，
+        # 而 failure() 在 cancelled 時不成立（2026-07-24 postmkt pm 場靜默消失的教訓）
+        if: failure() || cancelled()
+        uses: ./.github/actions/notify-failure
+        with:
+          pipeline: taiwan-flows-canon

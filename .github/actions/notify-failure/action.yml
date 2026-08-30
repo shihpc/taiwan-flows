@@ -1,0 +1,23 @@
+name: notify-failure
+description: 失敗告警——同日同管線只開一張 issue、重複失敗改留言（避免 issue 洪水）；需 permissions issues:write
+
+inputs:
+  pipeline:
+    description: 管線名（issue 標題用，如 postmkt/diag/mktbal/summary）
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        title="pipeline 失敗：${{ inputs.pipeline }} $(TZ=Asia/Taipei date +%F)"
+        n=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+        if [ -n "$n" ]; then
+          gh issue comment "$n" --body "再次失敗：$RUN_URL"
+        else
+          gh issue create --title "$title" --body "失敗 run：$RUN_URL"
+        fi
