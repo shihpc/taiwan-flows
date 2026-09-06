@@ -300,22 +300,26 @@ const yahoo = c => `<a href="https://tw.stock.yahoo.com/quote/${c}" target="_bla
 // ---------- data ----------
 async function boot(){
   loadCardState();
-  try{
-    state.latest = await (await fetch("data/latest.json",{cache:"no-cache"})).json();
-    const ts=(state.latest.generated_at||"").slice(0,16).replace("T"," ");
-    state.updatedTs=ts||"";
-    document.getElementById("updated").style.display="none";  // 併入資料日列
-  }catch(e){ document.getElementById("main").innerHTML =
-    `<div class="loading">無法載入 latest.json：${e}</div>`; return; }
-  // meta + 三支小檔並行載入（原本是 5 個 await 串行；彼此無依賴，沒有理由排隊）。
+  // 首屏 5 支小檔**同一批**發出（2026-09-06：原本先 await latest.json 再 Promise.all 其餘 4 支，
+  // 平白多一個 RTT；彼此無依賴，沒有理由排隊）。latest.json 失敗的語意保留：顯示錯誤並中止 boot；
+  // meta.json 失敗維持原行為（boot 拋出）；其餘三支失敗只讓對應功能降級（null）。
   // sector_latest.json（~575KB）已移出首屏改 lazy——只有產業別/產業鏈 tab 要用。
   const jsonOrNull = url => fetch(url,{cache:"no-cache"}).then(r=>r.json()).catch(e=>null);
-  const [, totals, foreignHist, status] = await Promise.all([
-    loadMeta(),                                   // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
+  const settle = p => p.then(v=>({ok:true,v})).catch(e=>({ok:false,e}));
+  const [latestR, metaR, totals, foreignHist, status] = await Promise.all([
+    settle(fetch("data/latest.json",{cache:"no-cache"}).then(r=>r.json())),
+    settle(loadMeta()),                           // calendar 供台指期比較 / 三大法人卡 / 區間模式使用
     jsonOrNull("data/totals.json"),
     jsonOrNull("data/foreign_history.json"),
     jsonOrNull("data/status.json"),
   ]);
+  if(!latestR.ok){ document.getElementById("main").innerHTML =
+    `<div class="loading">無法載入 latest.json：${latestR.e}</div>`; return; }
+  state.latest = latestR.v;
+  { const ts=(state.latest.generated_at||"").slice(0,16).replace("T"," ");
+    state.updatedTs=ts||"";
+    document.getElementById("updated").style.display="none"; }  // 併入資料日列
+  if(!metaR.ok) throw metaR.e;
   state.totals=totals; state.foreignHist=foreignHist; state.status=status;
   { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
@@ -979,22 +983,38 @@ function expandDaily(doc){
   for(const r of doc.rows){ const o={}; doc.cols.forEach((c,i)=>o[c]=r[i]); map[r[0]]=o; }
   return map;
 }
+// ---- sessionStorage LRU（2026-09-06）：`tf_daily_idx`＝依「最後使用時間」排序的日期清單（舊→新）。
+//      原本 setItem 超過配額只是靜默失敗、永不淘汰——配額一滿之後所有新日期都存不進去，快取形同停擺。
+//      現在：讀取命中→該日期移到清單尾；寫入 QuotaExceeded→刪清單最舊的一天再重試，最多重試 3 次。
+//      sessionStorage 被封鎖（隱私模式等）時所有存取 try/catch，退化成純記憶體快取、不影響功能。
+const DAILY_IDX_KEY="tf_daily_idx", DAILY_STORE_RETRY=3;
+function dailyIdxGet(){ try{ const a=JSON.parse(sessionStorage.getItem(DAILY_IDX_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function dailyIdxSet(a){ try{ sessionStorage.setItem(DAILY_IDX_KEY, JSON.stringify(a)); }catch(e){} }
+function dailyTouch(date){ const a=dailyIdxGet().filter(d=>d!==date); a.push(date); dailyIdxSet(a); }
+function dailyForget(date){ try{ sessionStorage.removeItem("d:"+date); }catch(e){} dailyIdxSet(dailyIdxGet().filter(d=>d!==date)); }
+function dailyEvictOldest(){ const a=dailyIdxGet(); if(!a.length) return false; dailyForget(a[0]); return true; }
+function dailyStore(date, payload){
+  for(let i=0;;i++){
+    try{ sessionStorage.setItem("d:"+date, payload); dailyTouch(date); return true; }
+    catch(e){ if(i>=DAILY_STORE_RETRY || !dailyEvictOldest()) return false; }
+  }
+}
 async function fetchDaily(date){
   if(state.dailyCache[date]) return state.dailyCache[date];
   // sessionStorage 存**壓縮原格式**（~256KB/日），不存展開後的物件（~698KB/日）：
   // 展開後 65 天要 44MB，遠超 5MB 配額 → setItem 幾乎必然丟例外被靜靜吃掉，
   // 而且每次 miss 都白做一次 698KB 的 JSON.stringify。存原格式配額約可容納 3~4 倍天數。
-  const ss=sessionStorage.getItem("d:"+date);
+  let ss=null; try{ ss=sessionStorage.getItem("d:"+date); }catch(e){}
   if(ss){
     try{
       const map=expandDaily(JSON.parse(ss));
-      state.dailyCache[date]=map; return map;
-    }catch(e){ sessionStorage.removeItem("d:"+date); }   // 舊格式/損壞 → 丟掉重抓
+      state.dailyCache[date]=map; dailyTouch(date); return map;   // 命中：更新 LRU 順序
+    }catch(e){ dailyForget(date); }   // 舊格式/損壞 → 丟掉重抓
   }
   const doc=await (await fetch(`data/daily/${date.replaceAll("-","")}.json`)).json();
   const map=expandDaily(doc);
   state.dailyCache[date]=map;
-  try{ sessionStorage.setItem("d:"+date, JSON.stringify({cols:doc.cols,rows:doc.rows})); }catch(e){}
+  dailyStore(date, JSON.stringify({cols:doc.cols,rows:doc.rows}));   // 滿了會淘汰最舊的再試，見上
   return map;
 }
 // 併發抓多個交易日（原本是 for + await 串行：65 天＝65 個序列 RTT、約 17MB）。
