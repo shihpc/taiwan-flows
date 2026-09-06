@@ -26,6 +26,7 @@
     border:1px solid var(--line);color:var(--dim)}
   .status.ok{color:var(--down);border-color:#1c3a30}
   .status.nodata{color:#e0b341;border-color:#3a3318}
+  .status.bad{color:var(--up);border-color:#4a1f26}
   .tabs,.modes{display:flex;gap:4px;margin-top:8px;overflow-x:auto;-webkit-overflow-scrolling:touch}
   .tabs{margin-top:10px}
   .modes{padding-bottom:8px}
@@ -319,8 +320,15 @@ async function boot(){
   state.totals=totals; state.foreignHist=foreignHist; state.status=status;
   { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
-  { const el=document.getElementById("status");  // 右上角顯示更新時間
-    if(state.updatedTs){ el.textContent="更新 "+state.updatedTs; el.className="status"+(state.status&&state.status.status==="ok"?" ok":""); }
+  { const el=document.getElementById("status");  // 右上角顯示更新時間／缺料狀態
+    const st=state.status&&state.status.status;
+    // status.json.status 語意見 src/run_daily.py classify_no_data（2026-09-06）：
+    //   missing＝預期交易日缺料（紅）、waiting＝平日發布截止前尚無資料（黃）；其餘照舊顯示更新時間
+    if(st==="missing"){ el.textContent="資料缺漏"; el.className="status bad";
+      el.title="預期交易日 "+(state.status.expected_date||state.status.date||"")+" 尚無資料（最新 "+(state.status.actual_date||"—")+"）"; }
+    else if(st==="waiting"){ el.textContent="等待資料發布"; el.className="status nodata";
+      el.title="預期交易日 "+(state.status.expected_date||state.status.date||"")+" 資料尚未發布"; }
+    else if(state.updatedTs){ el.textContent="更新 "+state.updatedTs; el.className="status"+(st==="ok"?" ok":""); }
     else el.style.display="none"; }
   renderTotCard();
   render();

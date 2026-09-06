@@ -52,17 +52,25 @@ jobs:
             echo "::endgroup::"
             status=$(python -c "import json;print(json.load(open('data/status.json'))['status'])" 2>/dev/null || echo error)
             echo "status=$status"
-            if [ "$status" = "ok" ] || [ "$status" = "no_data" ]; then
+            # status 語意（src/run_daily.py classify_no_data，2026-09-06）：
+            #   ok       已產出                       → 結束
+            #   no_data  週末非交易日                 → 結束（正常沒資料）
+            #   waiting  平日、台北 20:00 發布截止前   → 結束、不重試（哨兵/備援 cron 下一班會再來）
+            #   missing  平日、已過截止仍無資料        → 重試；用盡後 job 失敗（真交易日缺料不可靜默）
+            #   error    pipeline 丟例外              → 重試；用盡後 job 失敗
+            # 舊版把 no_data 與 ok 同等看待且從不失敗，真交易日缺料會被靜默吞掉（2026-08-01 事故）。
+            if [ "$status" = "ok" ] || [ "$status" = "no_data" ] || [ "$status" = "waiting" ]; then
               break
             fi
             if [ "$attempt" -lt 3 ]; then
-              echo "資料未就緒/錯誤，10 分鐘後重試…"
+              echo "資料缺料/錯誤（$status），10 分鐘後重試…"
               sleep 600
             fi
           done
-          # 三次仍 error 才讓 job 失敗（觸發 Actions 失敗通知信）
-          if [ "$status" = "error" ]; then
-            echo "::error::三次嘗試後仍失敗"
+          # 三次仍 missing / error 才讓 job 失敗（觸發 notify-failure 告警）。
+          # missing 若是國定假日屬誤報（repo 無假日行事曆來源，見 classify_no_data 註解），可接受。
+          if [ "$status" = "error" ] || [ "$status" = "missing" ]; then
+            echo "::error::三次嘗試後仍 $status（預期交易日缺料或管線錯誤）"
             exit 1
           fi
 

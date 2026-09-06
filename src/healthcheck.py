@@ -10,6 +10,8 @@
 #   python src/healthcheck.py --date 2026-06-26 --fix   # critical 時重抓該日 pipeline 後再驗
 #
 # 嚴重度：ok（全相符）/ warn（零星，可能是個股事件）/ critical（疑似未 settle 事故）。
+# 2026-09-06 加列數健全性：當日列數低於近 20 個 daily 檔中位數的 80% → warn、50% → critical
+#   （row_count_severity 純函式，價格與列數兩者取較嚴重者當 severity）。
 # 設計：純函式 check() 回結果 dict（run_daily 取用寫進 status.json）；CLI 才印出/重抓。
 
 from __future__ import annotations
@@ -38,6 +40,10 @@ TPE = timezone(timedelta(hours=8))
 TOL = 0.02            # 收盤價相對誤差容忍（2%）
 CRIT_PCT = 1.0       # 不符比例 ≥1% → critical
 CRIT_N = 20          # 或不符檔數 ≥20 → critical
+ROWS_HISTORY_N = 20   # 列數健全性：對照近 N 個 daily 檔的中位數
+ROWS_WARN_RATIO = 0.8  # 低於中位數 80% → warn
+ROWS_CRIT_RATIO = 0.5  # 低於中位數 50% → critical
+_SEV_RANK = {"ok": 0, "warn": 1, "critical": 2}
 
 
 def latest_daily_date() -> str | None:
@@ -55,6 +61,49 @@ def _daily_close(date: str) -> dict[str, float]:
     doc = json.loads(p.read_text(encoding="utf-8"))
     ci, cc = doc["cols"].index("close"), doc["cols"].index("code")
     return {r[cc]: r[ci] for r in doc["rows"] if r[ci]}
+
+
+def _daily_rows(date: str) -> int:
+    p = DAILY_DIR / f"{date.replace('-', '')}.json"
+    if not p.exists():
+        return 0
+    return len(json.loads(p.read_text(encoding="utf-8")).get("rows", []))
+
+
+def _row_counts_before(date: str, n: int = ROWS_HISTORY_N) -> list[int]:
+    """date 之前（不含）最近 n 個 daily 檔的列數，舊→新。"""
+    stem = date.replace("-", "")
+    files = sorted(f for f in DAILY_DIR.glob("*.json") if f.stem < stem)[-n:]
+    out = []
+    for f in files:
+        try:
+            out.append(len(json.loads(f.read_text(encoding="utf-8")).get("rows", [])))
+        except Exception:
+            continue
+    return out
+
+
+def row_count_severity(n_rows: int, history: list[int]) -> tuple[str, float | None]:
+    """列數健全性（純函式）：回 (severity, 歷史中位數)。
+
+    n_rows 低於中位數 ROWS_WARN_RATIO（80%）→ warn、低於 ROWS_CRIT_RATIO（50%）→ critical。
+    沒有歷史可對照時回 ok（無從判斷、不亂報）。動機：FinMind 偶爾只回半套股價/法人
+    （例如上櫃缺席），價格逐檔比對全相符、但整張表少一半——列數是價格健檢看不到的維度。
+    """
+    hist = [h for h in history if h]
+    if not hist:
+        return "ok", None
+    med = float(sorted(hist)[len(hist) // 2]) if len(hist) % 2 else \
+        (sorted(hist)[len(hist) // 2 - 1] + sorted(hist)[len(hist) // 2]) / 2
+    if n_rows < med * ROWS_CRIT_RATIO:
+        return "critical", med
+    if n_rows < med * ROWS_WARN_RATIO:
+        return "warn", med
+    return "ok", med
+
+
+def worst_severity(*sevs: str) -> str:
+    return max(sevs, key=lambda x: _SEV_RANK.get(x, 0))
 
 
 def _auth_close(date: str) -> dict[str, float] | None:
@@ -99,9 +148,14 @@ def check(date: str, tol: float = TOL) -> dict:
                           "ratio": round(ratio, 2)})
     pct = round(bad / n * 100, 2) if n else 0.0
     worst.sort(key=lambda w: abs(w["ratio"] - 1), reverse=True)
-    sev = "ok" if bad == 0 else ("critical" if (pct >= CRIT_PCT or bad >= CRIT_N) else "warn")
-    return {**res, "severity": sev, "compared": n, "mismatch": bad,
-            "mismatch_pct": pct, "worst": worst[:5]}
+    price_sev = "ok" if bad == 0 else ("critical" if (pct >= CRIT_PCT or bad >= CRIT_N) else "warn")
+    # 列數健全性（與價格比對獨立的維度，取較嚴重者）
+    n_rows = _daily_rows(date)
+    rows_sev, rows_med = row_count_severity(n_rows, _row_counts_before(date))
+    return {**res, "severity": worst_severity(price_sev, rows_sev),
+            "price_severity": price_sev, "compared": n, "mismatch": bad,
+            "mismatch_pct": pct, "worst": worst[:5],
+            "rows": n_rows, "rows_median": rows_med, "rows_severity": rows_sev}
 
 
 def remediate(date: str) -> dict:

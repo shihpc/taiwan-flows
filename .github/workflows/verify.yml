@@ -86,9 +86,18 @@ jobs:
       # rc=2（權威源查不到／無 daily 檔／健檢自己丟例外）只當警告：那是「這次驗不了」，
       # 不是價格事故。若跟 critical 一樣亮紅，FinMind 每掛一次就叫一次狼來了，
       # 真的出事時就沒人看了。status.json.healthcheck.severity 會記成 unknown。
+      # 例外：status.json.status 仍為 missing（預期交易日缺料、verify 重跑 pipeline 也補不回）
+      # 是真的出事，不是「驗不了」——要亮紅（2026-09-06；daily.yml 那邊已先告警過一次，
+      # 這裡再叫一次是因為 verify 是最後一道補救，補不回就該有人看）。
       - name: Warn if verification could not run
         if: steps.verify.outputs.rc == '2'
         run: |
+          st=$(python -c "import json;print(json.load(open('data/status.json')).get('status','?'))" 2>/dev/null || echo "?")
+          if [ "$st" = "missing" ]; then
+            echo "::error::預期交易日仍缺料（status=missing）：verify 重跑 pipeline 也無資料。"
+            echo "::error::若當日為國定假日屬誤報（repo 無假日行事曆），否則請查 FinMind 或手動補跑。"
+            exit 1
+          fi
           echo "::warning::本次無法完成收盤價驗證（權威源查詢失敗／無 daily 檔）——"
           echo "::warning::不代表資料有問題；稍後可手動 workflow_dispatch 重驗。"
 

@@ -19,7 +19,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import run_daily  # noqa: E402
@@ -44,8 +43,9 @@ CASES = [
 ]
 
 
-def main() -> int:
+def _run_cases() -> tuple[int, int, list[str]]:
     ok = fail = 0
+    fails: list[str] = []
     for name, now, expect in CASES:
         class FrozenDatetime(datetime):
             @classmethod
@@ -59,11 +59,25 @@ def main() -> int:
             ok += 1
         else:
             fail += 1
-            print(f"  ✗ {name}：得到 {got}，期望 {expect}")
+            fails.append(f"  ✗ {name}：得到 {got}，期望 {expect}")
+    return ok, fail, fails
 
+
+def test_target_trading_day() -> None:  # pytest 入口（python -m pytest tests/）
+    _, fail, fails = _run_cases()
+    assert not fail, "\n".join(fails)
+
+
+def main() -> int:  # 獨立腳本入口（python tests/test_trading_day.py）
+    ok, fail, fails = _run_cases()
+    for line in fails:
+        print(line)
     print(f"target_trading_day: {ok} 通過 / {fail} 失敗")
     return 1 if fail else 0
 
 
 if __name__ == "__main__":
+    # 只在直接執行時包 UTF-8（Windows cp950 終端）；import 時不動 sys.stdout，否則 pytest 的
+    # capture 會被搞壞（I/O operation on closed file）
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     raise SystemExit(main())
