@@ -392,6 +392,10 @@ function currentSectors(){
 // ---------- table builder ----------
 // 可排序 + 可捲動表格（預設高度約 5 列，捲動看完 30 筆；點欄位標題排序）
 const TABLES={}; let TID=0;
+// esc：資料檔字串進 innerHTML 前的逃逸（2026-09-06）。股名／產業名／產業鏈節點名來自 FinMind，
+// 管線端 src/sanitize.py 已消毒，這裡是格式器層的第二道；只在 COL_NAME／類股／次產業格式器與
+// 標題屬性用，不動聚合邏輯（parity 抽的 aggregateRange/jPage*/cmpD 不經過它）。
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const cellText=html=>{ const d=document.createElement("div"); d.innerHTML=html; return d.textContent.trim(); };
 function sortVal(txt){
   if(txt===""||txt==="—") return null;
@@ -441,7 +445,7 @@ document.addEventListener("click",e=>{
   state.sub[state.tab].opensub=(cur===s?null:s); render();
 });
 const COL_CODE = {h:"代號",cls:"code",f:r=>yahoo(r.code)};
-const COL_NAME = {h:"名稱",cls:"name",f:r=>r.name};
+const COL_NAME = {h:"名稱",cls:"name",f:r=>esc(r.name)};
 
 // ---------- pages ----------
 function instCols(side){
@@ -588,7 +592,7 @@ function renderSectors(tab){
   }
 
   const cols=[
-    {h:"類股",f:r=>`<span class="sectlink" data-sector="${encodeURIComponent(r.sector)}" style="cursor:pointer;white-space:nowrap;border-bottom:1px ${open===r.sector?'solid':'dotted'} currentColor;font-weight:${open===r.sector?700:'inherit'}">${r.sector}</span>`},
+    {h:"類股",f:r=>`<span class="sectlink" data-sector="${encodeURIComponent(r.sector)}" style="cursor:pointer;white-space:nowrap;border-bottom:1px ${open===r.sector?'solid':'dotted'} currentColor;font-weight:${open===r.sector?700:'inherit'}">${esc(r.sector)}</span>`},
     {h:"買賣超",f:r=>sign(r.net_amt_k,fmtYi(r.net_amt_k))},
     {h:"張數",f:r=>sign(r.net_lots,fmtLot(r.net_lots))},
     {h:"檔數",f:r=>fmtNum(r.n)},
@@ -614,9 +618,9 @@ function chainSubLevel(sv, inv, industry, tab){
       o.net_amt_k+=r[af]; o.net_lots+=r[nf]; o.n++; if(r[nf]>0)o.n_buy++; else if(r[nf]<0)o.n_sell++; }
   }
   const subs=Object.values(b).filter(o=>o.net_amt_k!==0||o.net_lots!==0).sort((x,y)=>y.net_amt_k-x.net_amt_k);
-  let html=`<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${industry}</b> · ${INV_LABEL[inv]} · ${subs.length} 次產業（點看成分股；再點上方類股可收合）</div>`;
+  let html=`<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${esc(industry)}</b> · ${INV_LABEL[inv]} · ${subs.length} 次產業（點看成分股；再點上方類股可收合）</div>`;
   const cols=[
-    {h:"次產業",f:r=>`<span class="subsectlink" data-sub="${encodeURIComponent(r.sub)}" style="cursor:pointer;white-space:nowrap;border-bottom:1px ${opensub===r.sub?'solid':'dotted'} currentColor;font-weight:${opensub===r.sub?700:'inherit'}">${r.sub}</span>`},
+    {h:"次產業",f:r=>`<span class="subsectlink" data-sub="${encodeURIComponent(r.sub)}" style="cursor:pointer;white-space:nowrap;border-bottom:1px ${opensub===r.sub?'solid':'dotted'} currentColor;font-weight:${opensub===r.sub?700:'inherit'}">${esc(r.sub)}</span>`},
     {h:"買賣超",f:r=>sign(r.net_amt_k,fmtYi(r.net_amt_k))},
     {h:"張數",f:r=>sign(r.net_lots,fmtLot(r.net_lots))},
     {h:"檔數",f:r=>fmtNum(r.n)},
@@ -629,7 +633,7 @@ function chainSubLevel(sv, inv, industry, tab){
     const scols=[COL_CODE,COL_NAME,
       {h:"買賣超",f:r=>sign(r.amt,fmtYi(r.amt))},{h:"張數",f:r=>sign(r.net,fmtLot(r.net))},
       {h:"漲跌",f:r=>chg(r.chg)},{h:"收盤",f:r=>r.close==null?"—":r.close.toLocaleString("en-US")}];
-    html += `<div id="subDetail"><div class="muted" style="font-size:12px;margin:10px 0 4px">${industry} › <b>${opensub}</b> · ${INV_LABEL[inv]} · ${rows.length} 檔</div>`+table(scols, rows)+`</div>`;
+    html += `<div id="subDetail"><div class="muted" style="font-size:12px;margin:10px 0 4px">${esc(industry)} › <b>${esc(opensub)}</b> · ${INV_LABEL[inv]} · ${rows.length} 檔</div>`+table(scols, rows)+`</div>`;
   }
   return html;
 }
@@ -671,7 +675,7 @@ function sectorDetail(sv, classify, inv, sector){
     {h:"張數",f:r=>sign(r.net,fmtLot(r.net))},
     {h:"漲跌",f:r=>chg(r.chg)},
     {h:"收盤",f:r=>r.close==null?"—":r.close.toLocaleString("en-US")}];
-  return `<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${sector}</b> · ${INV_LABEL[inv]} · ${rows.length} 檔（再點該類股可收合）</div>`+table(cols, rows);
+  return `<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${esc(sector)}</b> · ${INV_LABEL[inv]} · ${rows.length} 檔（再點該類股可收合）</div>`+table(cols, rows);
 }
 
 // ----- 外資買賣超 tab：市場別 年/月 歷史 + 近期（讀 foreign_history.json，官方 TWSE+TPEx）-----
@@ -788,7 +792,7 @@ function updateDateLabel(){
   }
   const badge = state.tab==="foreignflows" ? "" : srcBadge("daily");
   const ss=siteStatus();
-  const meta=`<span class="dmeta">｜本站更新 ${state.updatedTs||"—"}｜狀態：<span class="stw ${ss.cls}" title="${ss.title}">${ss.label}</span></span>`;
+  const meta=`<span class="dmeta">｜本站更新 ${state.updatedTs||"—"}｜狀態：<span class="stw ${ss.cls}" title="${esc(ss.title)}">${esc(ss.label)}</span></span>`;
   el.innerHTML=`<span>${txt}</span>${meta}${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };

@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from futures import tx_foreign_oi  # noqa: E402
+from sanitize import sanitize_label  # noqa: E402  meta 名稱寫進 latest 前再消毒一次（防舊 meta.json）
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("budget")
@@ -144,8 +145,8 @@ def aggregate(dates: list[str], docs: dict, meta: dict, n: int) -> dict[str, dic
         if issued is not None and (not isinstance(issued, (int, float)) or math.isnan(issued)):
             issued = None
         agg[code] = {
-            "code": code, "name": info["name"], "is_etf": info["is_etf"],
-            "industry": info["industry"], "issued_lots": issued, "close": jround(close2, 2),
+            "code": code, "name": sanitize_label(info["name"]), "is_etf": info["is_etf"],
+            "industry": sanitize_label(info["industry"]), "issued_lots": issued, "close": jround(close2, 2),
             "chg_pct": chg, "bias20": bias,
             "vol": jround(sums["vol"]), "amt": jround(sums["amt"]),
             "t_net": jround(sums["t_net"], 1), "t_amt": jround(sums["t_amt"]),

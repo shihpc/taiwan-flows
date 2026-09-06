@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from finmind import fm_get  # noqa: E402
+from sanitize import sanitize_label  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("build_meta")
@@ -90,8 +91,8 @@ def build_meta() -> dict:
         if lots is not None:
             matched += 1
         stocks[code] = {
-            "name": str(r["stock_name"]),
-            "industry": str(r["industry_category"]),
+            "name": sanitize_label(r["stock_name"]),      # 咽喉點消毒（見 src/sanitize.py）
+            "industry": sanitize_label(r["industry_category"]),
             "is_etf": is_etf,
             "issued_lots": lots,
         }

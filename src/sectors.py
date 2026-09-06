@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import budget  # noqa: E402  重用 load_daily / aggregate / WINDOWS
 from budget import jround  # noqa: E402  與前端 Math.round 同語意（見 budget.jround）
+from sanitize import sanitize_label  # noqa: E402  產業／次產業名咽喉點消毒
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sectors")
@@ -73,7 +74,7 @@ def build_chain_snapshot() -> dict:
     for _, r in df.iterrows():
         code = r["stock_id"]
         e = cmap.setdefault(code, {"i": [], "s": [], "p": []})
-        ind, sub = str(r["industry"]), str(r["sub_industry"])
+        ind, sub = sanitize_label(r["industry"]), sanitize_label(r["sub_industry"])
         if ind and ind not in e["i"]:
             e["i"].append(ind)
         if sub and sub not in e["s"]:

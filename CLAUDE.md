@@ -167,7 +167,7 @@ GitHub Pages
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
 - **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
-- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`index.html:254`、`:1531`，2026-09-06 依實測更正行號）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
+- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`loadSiteVer()` 在 `index.html:1535`、footer `#siteVer` 在 `:254`；2026-09-06 依實測更正行號與配對順序）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
 - **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
@@ -194,7 +194,7 @@ GitHub Pages
 | Excel 下載 | `URL.createObjectURL(blob)` → `<a download>`（`buildExcel`） | `blob:` 走 `<a download>` 導航，不受 default-src 管 |
 | 圖片／字型／iframe／object | 無 `<img>`、無外部字型、無 iframe | `img-src 'self' data:`、`object-src 'none'` 純收緊 |
 | `eval`／`new Function`／`javascript:` URL／`document.write` | **0 處** | 不需 `'unsafe-eval'` |
-| `innerHTML` 拼字串 | **18 處**，**沒有 `esc()`**，`r.name`／`r.sector`／`r.sub`（FinMind 股名、交易所產業、產業鏈名稱）直接內插；`cellText()` 另以 detached div 的 innerHTML 抽純文字做排序 | 資料全部來自本 repo 自產 JSON（信任邊界＝repo 內容，無使用者輸入進 DOM）；`'unsafe-inline'` 之下 CSP **擋不住**這條路，這是已知未補的缺口，不是被 CSP 解決的問題 |
+| `innerHTML` 拼字串 | **18 處**；**格式器層已 `esc()`＋管線消毒（2026-09-06）**：前端 `esc()`（`index.html:398`，逃 `&<>"'`）套在 `COL_NAME`（`:448`）、`.sectlink`／`.subsectlink` 格式器（`:595`、`:623`）、類股／次產業明細標題（`:621`、`:636`、`:678`）與 `updateDateLabel` 的狀態 `title=`（`:795`）——`r.name`／`r.sector`／`r.sub` 全部經此進 DOM；`data-sector`／`data-sub` 屬性走 `encodeURIComponent`。管線端 `src/sanitize.py` `sanitize_label()` 去 `<>"'`＋控制字元、截 40 字，套在 `build_meta.py` 寫 name／industry、`sectors.py --build-chain` 寫產業／次產業、`budget.py aggregate` 寫 latest name／industry 三處（**`&` 刻意保留**：14 檔 `S&P` ETF 與產業鏈「MR Headset & SG」是真實名稱，實查 `tests/test_sanitize.py` 守現行資料零變動）。`cellText()` 仍以 detached div 的 innerHTML 抽純文字做排序，`esc()` 後 `textContent` 還原為原字串、排序不受影響（Playwright 實測名稱／數值欄升降冪皆正確） | 信任邊界原為「repo 內容」，但股名／產業名實際來自 FinMind（`build_meta.py:93`），`'unsafe-inline'` 之下 CSP 擋不住這條路，故補前端逃逸＋管線消毒兩道；Playwright 以 `<img onerror>` 股名／產業名注入 8 tab 實測 `window.__xss` 未觸發、畫面顯示字面文字 |
 | localStorage 內容 | `tf_gh_token`（只送 Authorization header）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
 
 `base-uri 'none'`：頁面無 `<base>`，也不會需要。**新增資料源／CDN 時要同步改 `connect-src`／`script-src`**，
