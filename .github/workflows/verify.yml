@@ -72,6 +72,15 @@ jobs:
           if git diff --cached --quiet; then
             echo "無變更，略過 commit"; exit 0
           fi
+          # no-op 守門（src/noop_guard.py，2026-09-06）：staged 的 data/*.json 若去掉頂層
+          # generated_at／checked_at／last_attempt_at 後與 HEAD 完全相同，就不 commit——
+          # 冪等重跑每次都改時戳，原本每交易日 3 次 commit 有 7/12 是純時戳 no-op（~4MB/次）。
+          # 退出碼 0=NOOP、1=有真變化、2=守門自己失敗（視同有變化，照常 commit，fail-safe）。
+          # status.json 的 status／expected_date／last_success_at 變化都算真變化，missing 一定推得上去。
+          rc=0; python src/noop_guard.py || rc=$?
+          if [ "$rc" = "0" ]; then
+            echo "內容無變化（只有時間戳不同），略過 commit"; exit 0
+          fi
           d=$(python -c "import json;print(json.load(open('data/status.json'))['date'])")
           sev=$(python -c "import json;print(json.load(open('data/status.json')).get('healthcheck',{}).get('severity','?'))")
           git commit -m "verify: $d price healthcheck=$sev [skip ci]"
