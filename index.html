@@ -245,10 +245,9 @@
 <main id="main"><div class="loading">載入中…</div></main>
 <footer>資料來源 FinMind · 個股連結 Yahoo 股市 · 紅漲綠跌（台股慣例） <span id="siteVer" hidden></span></footer>
 
-<!-- defer：只有按「匯出 Excel」才用得到，不加會 render-blocking 把 latest.json 的請求
-     整個排在第三方 CDN 之後（實測 CDN 慢 2.5 秒，首屏 JSON 就晚 2.5 秒才發出），
-     首屏 JSON 從 1MB 砍到 150KB 的效果會被這一支抵銷掉。 -->
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<!-- ExcelJS 不再於首屏載入（2026-09-06）：原本 `<script defer>` 雖不 render-blocking，
+     但 gzip 後 256KB 仍佔冷快取首屏約 68% 的傳輸量，而全站只有 buildExcel() 用得到。
+     改為按下「⬇ 下載 Excel」時才由 ensureExcelJS() 動態插入同一支 CDN script（見該函式）。 -->
 <script>
 const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   customPages:null, customMeta:null, dailyCache:{}, sectorLatest:null, sectorRanges:null,
@@ -1281,10 +1280,31 @@ async function pagesForRange(d1,d2){
   const agg=aggregateRange(inRange,docs,state.meta,prevDate,ma20);
   return {foreign:jPageInst(agg,"f"),trust:jPageInst(agg,"t"),sync:jPageSync(agg),oppose:jPageOppose(agg),etf:jPageEtf(agg)};
 }
+// ---- ExcelJS 按需載入：只有匯出才需要，首屏不載（gzip 256KB）。
+//      回 promise；in-flight 去重（連點不重複插 script）；失敗清掉 in-flight 讓下一次點擊可重試。
+const EXCELJS_URL="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
+let excelJsLoading=null;
+function ensureExcelJS(){
+  if(typeof ExcelJS!=="undefined") return Promise.resolve();
+  if(excelJsLoading) return excelJsLoading;
+  excelJsLoading=new Promise((resolve,reject)=>{
+    const s=document.createElement("script"); s.src=EXCELJS_URL; s.async=true;
+    s.onload=()=>{ if(typeof ExcelJS!=="undefined") resolve(); else reject(new Error("ExcelJS 載入後未定義")); };
+    s.onerror=()=>{ s.remove(); reject(new Error("無法載入 ExcelJS（CDN 連線失敗）")); };
+    document.head.appendChild(s);
+  }).catch(e=>{ excelJsLoading=null; throw e; });
+  return excelJsLoading;
+}
 async function buildExcel(){
-  if(typeof ExcelJS==="undefined"){ alert("Excel 函式庫尚未載入，請稍候再試"); return; }
   if(!state.meta){ alert("資料尚未載入"); return; }
-  const btn=document.getElementById("xlsxBtn"); const old=btn.textContent; btn.textContent="產生中…";
+  const btn=document.getElementById("xlsxBtn"); const old=btn.textContent;
+  if(typeof ExcelJS==="undefined"){
+    btn.disabled=true; btn.textContent="載入匯出元件…";
+    try{ await ensureExcelJS(); }
+    catch(e){ btn.disabled=false; btn.textContent=old; alert("匯出元件載入失敗："+(e&&e.message||e)+"\n請確認網路後再按一次重試"); return; }
+    btn.disabled=false; btn.textContent=old;
+  }
+  btn.textContent="產生中…";
   try{
     const d2=xlsxAnchor();
     const P=[{name:"單日",s:d2,e:d2}].concat(
