@@ -153,6 +153,7 @@ GitHub Pages
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
 - **首屏只載 4 支小檔**（latest / meta / totals / foreign_history / status，並行）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
+- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`index.html:245`、`:1449`）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
 - **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
