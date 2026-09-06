@@ -176,6 +176,31 @@ GitHub Pages
 - **投信/外資進出頁**排行鈕：依金額 / 依持股變動率 / 佔成交量（三者皆與買超/賣超連動）。
 - 注意：`bindSegs()` 只綁 `.seg[data-seg]`（卡片的日/週/月、上市櫃等 seg 無 data-seg，自行綁 onclick，勿被覆蓋）。
 
+## CSP 與注入面（2026-09-06）
+
+`index.html` 頂端有 `<meta http-equiv="Content-Security-Policy">`（`index.html:10`，比照
+`postmkt/index.html:10` 寫法）。加 CSP 前逐項盤點的注入面如下（**盤點結果，不是待辦**；
+使用者裁定不為 CSP 重構程式）：
+
+| 項目 | 現況 | 對 CSP 的意義 |
+|------|------|---------------|
+| inline `<script>` | **1 塊**（整站 JS 內嵌，`<script>`…`</script>` 一組） | 需 `script-src 'unsafe-inline'` |
+| inline 事件處理器（`onclick=` 等 HTML 屬性） | **0 處**（全部在 JS 內以 `.onclick=`／delegated `addEventListener` 綁定） | 無額外需求 |
+| inline `<style>`＋元素 `style=""` 屬性 | 整站 CSS 內嵌；`.sectlink`／`.subsectlink` 等以 `style=` 屬性拼字串 | 需 `style-src 'unsafe-inline'` |
+| 外連 script | `https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js`（`EXCELJS_URL`，`ensureExcelJS()` 按需插入） | `script-src` 白名單 cdnjs |
+| 外連 fetch | `https://api.github.com/repos/shihpc/taiwan-flows/commits/main`（`loadSiteVer()`）＋ `…/actions/workflows/daily.yml/dispatches`（`triggerUpdate()`，POST） | `connect-src` 白名單 api.github.com |
+| 站內 fetch | `data/*.json`、`data/daily/*.json`（全部同源） | `connect-src 'self'` |
+| 外連 `<a href>` | `https://tw.stock.yahoo.com/quote/<code>`（`yahoo()`，`target=_blank rel=noopener`） | 導航不受 default-src 管，無需列 |
+| Excel 下載 | `URL.createObjectURL(blob)` → `<a download>`（`buildExcel`） | `blob:` 走 `<a download>` 導航，不受 default-src 管 |
+| 圖片／字型／iframe／object | 無 `<img>`、無外部字型、無 iframe | `img-src 'self' data:`、`object-src 'none'` 純收緊 |
+| `eval`／`new Function`／`javascript:` URL／`document.write` | **0 處** | 不需 `'unsafe-eval'` |
+| `innerHTML` 拼字串 | **18 處**，**沒有 `esc()`**，`r.name`／`r.sector`／`r.sub`（FinMind 股名、交易所產業、產業鏈名稱）直接內插；`cellText()` 另以 detached div 的 innerHTML 抽純文字做排序 | 資料全部來自本 repo 自產 JSON（信任邊界＝repo 內容，無使用者輸入進 DOM）；`'unsafe-inline'` 之下 CSP **擋不住**這條路，這是已知未補的缺口，不是被 CSP 解決的問題 |
+| localStorage 內容 | `tf_gh_token`（只送 Authorization header）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
+
+`base-uri 'none'`：頁面無 `<base>`，也不會需要。**新增資料源／CDN 時要同步改 `connect-src`／`script-src`**，
+否則瀏覽器只在 console 印 `Refused to connect/load`、畫面上是靜默失敗（`jsonOrNull` 會把它吞成 null）。
+驗證方式：Playwright 逐 tab 點擊＋匯出 Excel＋更新資料，console 不得出現 `Refused to`（2026-09-06 實測零違規）。
+
 ## 外資買賣超 tab（市場別月/年歷史，2026-06 新增）
 
 - **資料**：`data/foreign_history.json`＝`{latest_date, monthly:{"YYYY-MM":{tse:{buy_k,sell_k,net_k},otc:{...}|null}}, daily:{近30交易日}}`（千元）。年總/本週/上週/近5日由前端 `renderForeignFlows()` 聚合，合計＝tse+otc，OTC佔比＝OTC總量÷合計總量。

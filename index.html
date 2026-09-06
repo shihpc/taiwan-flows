@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<!-- CSP（2026-09-06，比照 postmkt）：注入面盤點與各 origin 用途見 CLAUDE.md「CSP 與注入面」。
+     script-src 含 cdnjs＝ExcelJS 按需載入（ensureExcelJS）；connect-src 含 api.github.com＝
+     loadSiteVer 版本列＋「更新資料」鈕 workflow_dispatch。Yahoo 連結是 <a href> 導航、不受此限。
+     'unsafe-inline' 是因為整站 JS/CSS 內嵌於本檔（刻意的單檔定位），新增資料源要同步改 connect-src。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com">
 <title>台股資金流 · taiwan-flows</title>
 <style>
   :root{
