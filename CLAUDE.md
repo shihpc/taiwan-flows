@@ -167,7 +167,7 @@ GitHub Pages
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
 - **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
-- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`index.html:245`、`:1449`）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
+- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`index.html:254`、`:1531`，2026-09-06 依實測更正行號）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
 - **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
@@ -275,10 +275,16 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - **字型慣例**：`xlTable` 有數字格式（c.fmt）的儲存格用 **Arial**（FZN），其餘文字/表頭/標題用 **微軟正黑體**（FZH）；head/sub 也是微軟正黑體。
 
 ### 版面精簡微調
-- 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「更新 ts｜資料日/區間｜資料源徽章」同一行（`.updin` 小灰）。
+- 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「資料日/區間｜本站更新 ts｜狀態：<狀態詞>｜資料源徽章」同一行（後兩段 `.dmeta` 小灰；2026-09-06 補「本站更新」與「狀態」段）。
 - 收合卡字體縮小（`.csum/.csum .v` 11px、collapsed `.ttl` 12px、padding 3px、line-height 1.2）→ 收合高度 ~23px。
 - ETF 概況（整體/股票/債券三卡）可收合：`state.etfStatsOpen`（存 tf_cards.etf），`renderEtf` 加 `#etfStatTgl`，bindSegs 綁定；收合後表格 scrollbox 自動長高。
-- 右上狀態邏輯：讀 `status.json.status` — `ok`→「資料已更新 <date>」(綠)、`no_data`→「尚未開盤/非交易日」(黃)、其他→「資料異常」。反映**最近一次 pipeline 執行結果**（run_date 抓不到當日股價即 no_data），非即時盤態。
+- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（`index.html:754`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
+  `status.json` 讀不到→「查詢失敗（未知）」(灰，不代表資料異常)、`missing`→「資料缺漏」(紅)、`waiting`→「等待資料發布」(黃)、
+  `no_data` 或台北週六／日→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
+  `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」＝台北平日 20:00
+  （後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近平日；**國定假日不處理**（與後端同，repo 無行事曆），
+  假日晚間會短暫顯示「等待資料發布」屬已知可接受誤報。反映**最近一次 pipeline 執行結果**，非即時盤態；
+  日期欄語意見 `postmkt/docs/date-semantics.md`。
 
 ### ETF 佔比語意（市值排行 vs 成交金額排行）
 - **市值排行**的佔比＝**持股市值/總市值**。**外資**＝官方持股比（準）；**投信、自營對 ETF 無可靠絕對來源**（投信 t_inv 缺 ETF baseline 種子而失真、自營無來源）→ `mktcap_row` 的 `t_hold_value_k/t_share/d_share` 一律 None（顯「—」），其他＝市值−外資持股市值。

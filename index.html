@@ -127,8 +127,11 @@
   /* info overlay */
   .info-btn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
     color:var(--accent);border-radius:14px;cursor:pointer;font-size:12px;font-family:inherit}
-  .daterow{display:flex;align-items:center;gap:10px;padding:7px 10px 9px;
+  .daterow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:7px 10px 9px;
     font-size:15px;font-weight:700;color:var(--accent);letter-spacing:.3px}
+  /* 頂列「資料日｜本站更新｜狀態」的後兩段：小字、去粗體；狀態詞顏色與右上角 .status 同一套 */
+  .daterow .dmeta{font-size:11px;font-weight:400;color:var(--dim);letter-spacing:0;white-space:nowrap}
+  .dmeta .stw.ok{color:var(--down)} .dmeta .stw.nodata{color:#e0b341} .dmeta .stw.bad{color:var(--up)}
   .daterow button{margin-left:auto;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);
     border-radius:6px;padding:3px 12px;font-family:inherit;font-weight:400;font-size:12px;cursor:pointer}
   .overlay{position:fixed;inset:0;background:#000c;z-index:50;display:none;
@@ -328,16 +331,8 @@ async function boot(){
   state.totals=totals; state.foreignHist=foreignHist; state.status=status;
   { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
-  { const el=document.getElementById("status");  // 右上角顯示更新時間／缺料狀態
-    const st=state.status&&state.status.status;
-    // status.json.status 語意見 src/run_daily.py classify_no_data（2026-09-06）：
-    //   missing＝預期交易日缺料（紅）、waiting＝平日發布截止前尚無資料（黃）；其餘照舊顯示更新時間
-    if(st==="missing"){ el.textContent="資料缺漏"; el.className="status bad";
-      el.title="預期交易日 "+(state.status.expected_date||state.status.date||"")+" 尚無資料（最新 "+(state.status.actual_date||"—")+"）"; }
-    else if(st==="waiting"){ el.textContent="等待資料發布"; el.className="status nodata";
-      el.title="預期交易日 "+(state.status.expected_date||state.status.date||"")+" 資料尚未發布"; }
-    else if(state.updatedTs){ el.textContent="更新 "+state.updatedTs; el.className="status"+(st==="ok"?" ok":""); }
-    else el.style.display="none"; }
+  { const el=document.getElementById("status");  // 右上角狀態詞：與頂列「狀態：」同一套語意（siteStatus）
+    const ss=siteStatus(); el.textContent=ss.label; el.className="status"+(ss.cls?" "+ss.cls:""); el.title=ss.title; }
   renderTotCard();
   render();
 }
@@ -744,6 +739,38 @@ function bindFfToggles(){
   });
 }
 
+// ---- 站台狀態（2026-09-06）：頂列「資料日｜本站更新｜狀態」與右上角 pill 共用同一套語意 ----
+// status.json.status 語意見 src/run_daily.py classify_no_data；日期欄語意見 postmkt/docs/date-semantics.md
+// （latest.json 的 date＝盤後法人主資料交易日、generated_at＝本站產出時刻（台北 +08:00）→「本站更新」）。
+// 「最近應有資料的交易日」＝台北時間：平日且已過 20:00（後端 PUBLISH_DEADLINE_HOUR）為今日，否則往前最近平日；
+// 國定假日不處理（與後端一致——repo 無行事曆來源），假日晚間 ok 會短暫顯示「等待資料發布」，屬已知可接受誤報。
+function taipeiNowStr(){ return new Date().toLocaleString("sv-SE",{timeZone:"Asia/Taipei"}); }  // "YYYY-MM-DD HH:MM:SS"
+function lastDueTradingDay(nowStr){
+  const dt=parseDate(nowStr.slice(0,10)), hour=+nowStr.slice(11,13), dow=dt.getDay();
+  if(dow>=1&&dow<=5&&hour>=20) return fmtDate(dt);
+  do{ dt.setDate(dt.getDate()-1); }while(dt.getDay()===0||dt.getDay()===6);
+  return fmtDate(dt);
+}
+function siteStatus(){
+  const S=state.status, st=S&&S.status, have=(state.latest&&state.latest.date)||"";
+  const exp=(S&&(S.expected_date||S.date))||"";
+  if(!S) return {key:"unknown",label:"查詢失敗（未知）",cls:"",
+    title:"status.json 讀取失敗——不知道資料好壞，不代表資料異常；資料日仍為 "+have};
+  if(st==="missing") return {key:"missing",label:"資料缺漏",cls:"bad",
+    title:"預期交易日 "+exp+" 尚無資料（最新 "+(S.actual_date||have||"—")+"）"};
+  if(st==="waiting") return {key:"waiting",label:"等待資料發布",cls:"nodata",
+    title:"預期交易日 "+exp+" 資料尚未發布（台北 20:00 截止前）"};
+  const now=taipeiNowStr(), dow=parseDate(now.slice(0,10)).getDay();
+  if(st==="no_data"||dow===0||dow===6) return {key:"closed",label:"休市定格",cls:"",
+    title:"非交易日，資料停在最近交易日 "+have};
+  if(st==="ok"){
+    const due=lastDueTradingDay(now);
+    if(have>=due) return {key:"ok",label:"正常",cls:"ok",title:"資料日 "+have+"＝最近應有資料的交易日"};
+    return {key:"waiting",label:"等待資料發布",cls:"nodata",
+      title:"最近應有資料的交易日 "+due+"，目前資料日 "+have+"（管線尚未跑到，或該日為國定假日）"};
+  }
+  return {key:"error",label:"資料異常",cls:"bad",title:"status="+st+(S.note?"："+S.note:"")};
+}
 function updateDateLabel(){
   const el=document.getElementById("daterow");
   const wk={thisweek:"本週",thismonth:"本月",lastweek:"上週",lastmonth:"上月",custom:"自訂區間"};
@@ -760,7 +787,9 @@ function updateDateLabel(){
     txt=`${w.start} ~ ${w.end}（${w.trading_days} 交易日）`;
   }
   const badge = state.tab==="foreignflows" ? "" : srcBadge("daily");
-  el.innerHTML=`<span>${txt}</span>${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
+  const ss=siteStatus();
+  const meta=`<span class="dmeta">｜本站更新 ${state.updatedTs||"—"}｜狀態：<span class="stw ${ss.cls}" title="${ss.title}">${ss.label}</span></span>`;
+  el.innerHTML=`<span>${txt}</span>${meta}${badge}`+(repick?`<button id="rRepick">重選區間</button>`:``);
   const rp=document.getElementById("rRepick");
   if(rp) rp.onclick=()=>{ state.customPages=null; state.customMeta=null; render(); };
 }
