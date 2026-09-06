@@ -43,10 +43,17 @@
 - **姊妹專案**：`taiwan-stock-radar`（radar 之後會以本專案輸出的 JSON 為資料源）
 - **日期欄語意**：`latest.json`/`meta.json` 的 `date`／`generated_at`（台北 +08:00）／`baseline_date`（投信庫存累計種子日，凍結於 2026-04-30；注意發行張數 `issued_lots` 本身每交易日更新，非凍結）等欄位語意，與跨站產出檔的統一對照，見 postmkt repo 的 `docs/date-semantics.md`。
 
-## 快速接手（最新狀態，2026-07-25 更新）
+## 快速接手（最新狀態，2026-09-06 更新）
 
+- **2026-09-06 改動摘要**：①真交易日缺料不再靜默——`run_daily.classify_no_data()` 把「無資料」三分為
+  `no_data`（週末）／`waiting`（平日 20:00 截止前）／`missing`（過截止仍缺料→重試、用盡亮紅），
+  `status.json` 新增 `expected_date`／`actual_date`／`last_attempt_at`／`last_success_at`，
+  `verify_daily` 改驗 `expected_date`（不再拿昨天的檔驗今天）並在 `missing` 時重跑補回，
+  `healthcheck` 加列數健全性（近 20 檔中位數 80%→warn／50%→critical），前端右上角新增
+  「資料缺漏」(紅)／「等待資料發布」(黃)；測試 `tests/test_status_classify.py`（日期相對現在）。
+  ②ExcelJS 改按需載入（`ensureExcelJS()`，首屏少 256KB gzip）。③本檔多處數字依實測更正（見各處括註）。
 - **資料現況**：全站對齊 **2026-07-24**（91 個交易日，2026-03-11 起）。每日排程**週一~五 21:19 台北**自動跑（`cron: 19 13 * * 1-5`；2026-07-14 由 21:00 延後——TaiwanStockShareholding 官方 21:00 更新，留緩衝）。
-- **雙觸發**：主觸發是 `taiwan-flow-live-v2` 的 Cloudflare Worker「FinMind 哨兵」（台北 19:00–23:00 每 5 分探測法人/持股落地，一落地就 `workflow_dispatch` daily.yml，通常早於 cron）；cron 留作備援，管線冪等、多跑無害。哨兵程式：`taiwan-flow-live-v2/worker/src/index.js` 的 `runSentinel`。
+- **雙觸發**：主觸發是 `taiwan-flow-live-v2` 的 Cloudflare Worker「FinMind 哨兵」（台北 **17:00–22:55** 每 5 分探測法人/持股落地，一落地就 `workflow_dispatch` daily.yml，通常早於 cron；時窗與 `src/run_daily.py` `target_trading_day()` docstring 一致，實測 2026-09-01～04 每日首筆 data commit 皆 09:01 UTC＝台北 17:01。本段原寫 19:00–23:00，2026-09-06 更正）；cron 留作備援，管線冪等、多跑無害。哨兵程式：`taiwan-flow-live-v2/worker/src/index.js` 的 `runSentinel`。
 - **另有兩支 workflow**（2026-07-25 新增）：`verify.yml`（23:40 台北，延後獨立驗證收盤價 + 必要時重抓修復）、`parity.yml`（改到 src/index.html 就跑前後端口徑一致性測試，**不需 token**）。
 
 ### 2026-07-25 優化批次（全部已驗證）
@@ -57,7 +64,7 @@
 | **前後端 parity 測試** | `tests/parity.py` + `tests/extract_js.mjs`：從 index.html 抽出 `aggregateRange`/`jPage*`/`cmpD` 在 node 沙箱跑同一份 daily，與 Python 逐檔逐欄比對（5 視窗全比、零容差）。**抓出 3 類真實漂移並修掉**：①`bias20` 的 MA20 取樣（Python 取「最後 20 個有效收盤」會往停牌前補樣本，JS 取「最近 20 交易日」）②四捨五入（Python `round` 是 banker's、JS `Math.round` 是 half-up → 每視窗數十檔 `*_amt` 差 1 千元；已統一走 `budget.jround`）③排序 tie-break（主鍵同值時 JS 物件把「像整數的鍵」排在字串鍵前，Python 依 meta.stocks 插入序 → **Top30 選出的成員都不同**；兩邊都加次鍵 `code`／類股用 `sector`）。 |
 | **token 改 lazy** | `finmind.py` 原本模組層 `TOKEN = _load_token()`，任何 import 鏈碰到就必須有 token → `budget`/`sectors` 明明只讀本地 JSON 也被綁死，無法離線重算或寫測試。改 `get_token()` 延後取。parity workflow 因此不需要 secret。 |
 | **daily.yml timeout 30→55 分** | 重試迴圈是 3 次 run_daily（各 3~5 分）＋ 2 次 `sleep 600`，原本 30 分會在第三次嘗試中途被砍；**job 被 timeout 砍時 `Commit & push` 不會執行**，等於前兩次抓好的資料整包丟掉。 |
-| **前端首屏** | `sector_latest.json`（~575KB，只有產業別/產業鏈 tab 要用）移出首屏改 lazy；boot 的 5 個串行 await 改 `Promise.all`。首屏 JSON 從 ~1MB 降到 ~150KB。lazy 載入統一走 `lazyJson()`（in-flight 去重 + `FAILED` 標記，避免 `currentSectors` 的 `.then(render)` 在載入失敗時無限重試）。 |
+| **前端首屏** | `sector_latest.json`（~575KB，只有產業別/產業鏈 tab 要用）移出首屏改 lazy；boot 的 5 個串行 await 改 `Promise.all`。首屏 JSON 從 ~1MB 降到解壓約 443KB（gzip 約 88KB；2026-09-06 實測更正，原寫「~150KB」）。lazy 載入統一走 `lazyJson()`（in-flight 去重 + `FAILED` 標記，避免 `currentSectors` 的 `.then(render)` 在載入失敗時無限重試）。 |
 | **自訂區間下載** | `runCustomRange` 原本逐日 `await`（65 天＝65 個序列 RTT、~17MB）→ 改 `fetchDailyMany` 6 條並行（實測 peak in-flight 6 vs 1）。 |
 | **sessionStorage** | 原本存**展開後**的物件（698KB/日，65 天要 44MB）→ 遠超 5MB 配額，`setItem` 幾乎必然丟例外被靜靜吃掉，且每次 miss 白做一次 698KB `JSON.stringify`。改存**壓縮原格式**（256KB/日），讀取時才展開；舊格式讀到會自動丟棄重抓。 |
 | **argv 清理** | `budget`/`foreign_flows`/`sectors`/`run_daily` 的 `main` 改 `main(argv=None)`，移除 `run_daily` 裡三處 `sys.argv` 竄改；共用的重算流程抽成 `run_daily.rebuild_products()`（`verify_daily` 重抓後也呼叫它）。 |
@@ -72,8 +79,15 @@
     「尚未開盤/非交易日」）。改用 `target_trading_day()`：`hour < 12` 時回推一天，
     與 postmkt `build_summary.py` 的 `slot_trading_day()` 同一套（該處 2026-07-17 已修，
     本 repo 是漏網的）。回歸測試 `tests/test_trading_day.py`（10 個邊界，免 token 免網路）。
-    ⚠️ 尚未處理：`daily.yml:54` 把 `no_data` 視為成功，會**靜默吞掉**這類誤判——
-    但「非交易日 400 優雅化」使用者請暫緩，故未動 exit code。
+    **2026-09-06 已修「靜默吞掉」問題**：原 `daily.yml` 把 `no_data` 與 `ok` 同等看待且從不失敗，
+    真交易日缺料會被靜默吞掉。現在 `run_daily.classify_no_data(target_day, now_tpe, calendar)`
+    三分：週末→`no_data`（exit 0）、平日台北 20:00 發布截止前→`waiting`（exit 0，不重試）、
+    平日過截止仍無資料→`missing`（exit 1；`daily.yml` 重試 3 次，用盡後 job 失敗觸發 notify-failure）。
+    國定假日 repo 無行事曆來源，會被判 `missing` 誤報一次（刻意接受，見函式 docstring）。
+    `verify_daily` 改驗 `status.json.expected_date`（原取 `data/daily/` 末檔名，當天沒產檔時會回頭
+    驗昨天並回 ok、把失敗日漂綠），`missing` 時重跑 pipeline 補回、仍失敗 severity=critical、exit 2
+    且 `verify.yml` 亮紅；`healthcheck.check()` 加列數健全性（近 20 檔中位數 80%→warn、50%→critical）。
+    「非交易日 400 優雅化」（`fm_get` 把 400 視為無資料）仍未動，與此無關。
   - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
   - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
   - Excel：**auto-fit 自動欄寬**（消除 #######）、四張並排表字體 11、可選**匯出基準日**、各表標**資料源日期**、ETF市值表移投信/自營佔比。
@@ -152,7 +166,7 @@ GitHub Pages
 ## 前端（index.html，單一檔，vanilla JS）
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
-- **首屏只載 4 支小檔**（latest / meta / totals / foreign_history / status，並行）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
+- **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
 - **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`index.html:245`、`:1449`）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
@@ -276,7 +290,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 ## 待辦 / 已知限制
 
 - **未做（2026-07-25 評估時明確排除）**：三個 repo（taiwan-flows / taiwan-flow-live-v2 / taiwan-stock-news）各有一份 FinMind client，token 載入、重試、節流各寫一次、行為不一致（例如非交易日 400 只有 taiwan-flows 會炸紅）。要共用需先有套件/vendoring 機制，跨 repo 改動風險高於收益，暫不動。
-- **觀察名單**：每個交易日 commit 約 4MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB）。目前靠 git delta 壓縮還撐得住，真要處理最省事的是 `sector_ranges` 不落 git、區間 drill-down 改前端即時聚合（`runCustomRange` 那條路徑已存在且有 parity 守門）。
+- **觀察名單**：每次 data commit 約 4.02MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB），而**每交易日實際 commit 3 次**（哨兵 17:01 首觸發＋後續哨兵／備援 cron 冪等重跑）≈ 12.5MB/交易日。2026-09-06 實測：`sector_ranges.json` 35 個版本佔 pack 44.5%、每版本 delta 後仍約 364KB；近 12 個交易日中 7 次是**只動 `generated_at` 的 no-op commit**（內容無變、純時戳）。真要處理最省事的是 `sector_ranges` 不落 git、區間 drill-down 改前端即時聚合（`runCustomRange` 那條路徑已存在且有 parity 守門）。
 - 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
 - ~~逐檔表只有買賣超「淨額」，無買/賣分項；要的話需加欄位 + 重跑回補。~~ **此項已完成**：daily schema 末尾已有 `f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（2026-07-26 核對 `data/daily/20260724.json` 實際 cols 確認，非待辦）。
 - GitHub Actions 在美國 runner 抓 TWSE/TPEx 偶爾節流；totals.py 已內建重試，若某天漏抓重跑 `backfill_market.py`。
