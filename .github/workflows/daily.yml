@@ -67,11 +67,19 @@ jobs:
               sleep 600
             fi
           done
-          # 三次仍 missing / error 才讓 job 失敗（觸發 notify-failure 告警）。
+          # 三次仍 error → 立即讓 job 失敗（觸發 notify-failure 告警；行為與舊版相同，不推送）。
+          # 三次仍 missing → **不在這裡 exit**：status.json（missing／expected_date）必須先被下一步
+          # Commit & push 推上 main，前端「資料缺漏」與 verify 班 23:40 的補回路徑才讀得到；
+          # 改由最後一步「Fail on missing」讓 job 失敗（2026-09-06 驗收發現：exit 在 push 前
+          # 會讓 missing 永遠推不上去，線上 status 停在昨天的 ok、verify 讀到昨天而綠）。
           # missing 若是國定假日屬誤報（repo 無假日行事曆來源，見 classify_no_data 註解），可接受。
-          if [ "$status" = "error" ] || [ "$status" = "missing" ]; then
-            echo "::error::三次嘗試後仍 $status（預期交易日缺料或管線錯誤）"
+          if [ "$status" = "error" ]; then
+            echo "::error::三次嘗試後仍 error（管線錯誤）"
             exit 1
+          fi
+          if [ "$status" = "missing" ]; then
+            echo "::warning::三次嘗試後仍 missing（預期交易日缺料），先推送 status 再讓 job 失敗"
+            echo "MISSING_DAY=1" >> "$GITHUB_ENV"
           fi
 
       - name: Commit & push
@@ -92,6 +100,13 @@ jobs:
             echo "遠端有更新或推送衝突，rebase 後重試 $i…"; sleep 5
           done
           echo "::error::push 重試 5 次仍失敗"; exit 1
+
+      - name: Fail on missing
+        # 真交易日缺料：status 已推送，這裡才讓 job 失敗以觸發告警（見上方 run 步驟註解）
+        if: env.MISSING_DAY == '1'
+        run: |
+          echo "::error::預期交易日缺料（status=missing），已推送 status.json；等待 verify 班補回或人工處理"
+          exit 1
 
       - name: Notify failure
         # cancelled 也要告警：跑一半被取消（GitHub 端異常或誤按）同樣代表該場沒產出，

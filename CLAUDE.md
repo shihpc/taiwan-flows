@@ -82,7 +82,7 @@
     **2026-09-06 已修「靜默吞掉」問題**：原 `daily.yml` 把 `no_data` 與 `ok` 同等看待且從不失敗，
     真交易日缺料會被靜默吞掉。現在 `run_daily.classify_no_data(target_day, now_tpe, calendar)`
     三分：週末→`no_data`（exit 0）、平日台北 20:00 發布截止前→`waiting`（exit 0，不重試）、
-    平日過截止仍無資料→`missing`（exit 1；`daily.yml` 重試 3 次，用盡後 job 失敗觸發 notify-failure）。
+    平日過截止仍無資料→`missing`（exit 1；`daily.yml` 重試 3 次，用盡後**先 Commit & push 把 `status.json` 推上 main、再由「Fail on missing」步驟讓 job 失敗**觸發 notify-failure——順序不可反，否則前端「資料缺漏」與 verify 補回路徑永遠讀不到 missing）。
     國定假日 repo 無行事曆來源，會被判 `missing` 誤報一次（刻意接受，見函式 docstring）。
     `verify_daily` 改驗 `status.json.expected_date`（原取 `data/daily/` 末檔名，當天沒產檔時會回頭
     驗昨天並回 ok、把失敗日漂綠），`missing` 時重跑 pipeline 補回、仍失敗 severity=critical、exit 2
