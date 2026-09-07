@@ -210,18 +210,25 @@ GitHub Pages
 ## 類股資金流（2026-06-28 新增，後端＋前端完成）
 
 - **目的**：在現有逐檔法人買賣超上加「分類維度」，看資金流向哪類股。兩種分類法 × 四法人別。
-- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest.json`(單日)/`sector_ranges.json`(r5/10/20/65)。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。
+- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest_lite.json`(單日)/`sector_ranges_lite.json`(r5/10/20/65)——見下方「雙格式與 `SECTOR_SOURCE`」。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。
 - **custom/本週/本月/上週/上月**：`runCustomRange` 算好逐檔 agg 後呼叫 `jPageSectors(agg, chainMap)` 即時建類股 view 存 `state.customSectors`（鏡像後端 `build_view`）；`currentSectors()` 這些模式回 customSectors。需 `ensureChainMap()`（載 `industry_chain.json` 的 `map`）。
 - **產業鏈第二層 drill**：chain 頁 產業→**次產業**→成分股。`industry_chain.json` 的 `map[code].p` 存 `(產業,次產業)` 配對（`--build-chain` 產生）；`chainSubLevel()` 用配對把某產業的成分股歸到各次產業、再點次產業列出個股（`.subsectlink` delegated click，`state.sub.chain.opensub`）。展開時上層摘要表壓到 190px 讓深層露出、scrollIntoView。
 - 已驗證：exch/chain 排序、兩層 drill、1d/r5/上週、法人別切換、無 console error。例：半導體→IC封測(+116.5億)→旺宏/日月光/南茂/力成。
 - **分類法**：`exchange`（交易所產業別，來自 `meta.stocks[code].industry`，**互斥可加總**）/ `chain`（產業鏈 `industry`，來自 `industry_chain.json`，**多對多**）。
 - **法人別**：`total`（=f+t+d）/ `foreign` / `trust` / `dealer`。
-- **`src/sectors.py`**：**重用 `budget.load_daily`+`budget.aggregate`**（不重抓、不重算流量，口徑同專案：張＋千元）；逐檔歸戶後輸出 `data/sector_latest.json`（單日）、`data/sector_ranges.json`（r5/10/20/65）。結構：`classifications.{exchange|chain}.investors.{total|foreign|trust|dealer}=[{sector,net_amt_k,net_lots,n,n_buy,n_sell}]` + `stocks:[逐檔流量列含 exch/chain 標籤]`（前端點類股→filter stocks 排序個股）。
+- **`src/sectors.py`**：**重用 `budget.load_daily`+`budget.aggregate`**（不重抓、不重算流量，口徑同專案：張＋千元）；逐檔歸戶後輸出四份（full＋lite，見下條）。結構：`classifications.{exchange|chain}.investors.{total|foreign|trust|dealer}=[{sector,net_amt_k,net_lots,n,n_buy,n_sell}]` + `stocks:[逐檔流量列含 exch/chain 標籤]`（前端點類股→filter stocks 排序個股）。
 - **`industry_chain.json`**：`--build-chain` 產出，`map: code→{i:[產業],s:[次產業]}`（2339 檔/47 產業/258KB）。變動慢，不進每日排程、偶爾手動重抓即可。
 - **口徑雷（前端徽章務必標）**：
   - chain **多對多**：一檔掛多節點（平均 1.65、最多 21），各節點加總**會重疊、≠大盤、不可讀成市佔**（主題曝險）。**歸戶時要對「產業」去重**（一檔在同產業底下有多個次產業時，勿因 sub_industry 重複計入該產業——否則半導體會從 ~−795 億膨脹成 ~−2700 億）。
   - chain 僅含產業鏈有分類個股（~1940/2328），**不含 ETF/權證**（與 ETF 頁口徑不同）。
-- **size**：sector_ranges.json ~2.5MB（逐檔表 ×5 窗）。若 Pages 載入嫌大，可改只存單日逐檔表、區間 drill-down 改前端聚合（鏡像 `runCustomRange`）。
+- **雙格式與回退開關 `SECTOR_SOURCE`（2026-09-07，批次三 #17 瘦身）**：
+  - **後端一次產四份**（`src/sectors.py main()`）：**full**＝`sector_latest.json`(566KB)／`sector_ranges.json`(2.5MB)，格式與舊版**完全相同**（含 `stocks`）；**lite**＝`sector_latest_lite.json`(35KB)／`sector_ranges_lite.json`(143KB)，**只有 `classifications`** ＋窗 meta（`dates`／`stocks_n`／`trading_days`／`start`／`end`）。lite 由純函式 `sectors.lite_view(view, dates)`（`src/sectors.py:195`）從**同一個** `build_view` 結果切出、`classifications` 沿用同一物件不重算，因此與 full 逐位相同（`tests/test_sectors_lite.py` 對現行 `data/` 產出實測守門）。
+  - **前端開關**：`const SECTOR_SOURCE="lite"`（`index.html:352`）→ `SECT_LATEST_URL`／`SECT_RANGES_URL`（`:353-354`）決定 `ensureSectorLatest`／`ensureSectorRanges`／`currentSectors` 的 FAILED 短路要看哪支 URL。**回退＝把這個常數改回 `"full"`，其餘一行都不用動**（lite 檔壞掉或缺檔時也是這樣救）。
+  - **drill-down 改前端即時聚合**：lite 沒有 `stocks`，點類股時由 `sectorStocks()`／`buildSectorStocks()`（`index.html:591`、`:602`）用該窗的 `dates` 走既有的 `fetchDailyMany`＋`aggregateRange`＋`jPageSectors` 重建同一份逐檔表（就是 `runCustomRange` 那條路徑，口徑由 `tests/parity.py` 守門）；結果快取在 `SECT_STOCKS[mode]`，daily 逐日檔沿用 `state.dailyCache`＋sessionStorage LRU（與自訂區間共用）。`sectorDetail`／`chainSubLevel` 的第一個參數已由 view 改成 **stocks 陣列**。
+  - **`ma20dates` 刻意傳空陣列**：`jPageSectors` 的逐檔列不含 `bias20`，MA20 取樣影響不到任何欄位；傳真的 20 天只會讓 1d/r5 的 drill-down 白抓 20 個 daily 檔。
+  - **體感取捨**：彙總表（進 tab 就看得到的那張）變快很多——單日 579KB→36KB、r20 2.57MB→146KB（Playwright 實測傳輸 bytes，未壓縮）；代價是**第一次點某個類股**要下載該窗的 daily 逐日檔（1d 2 檔、r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），期間 `#sectDetail` 顯示「載入成分股 i/n …」，同窗之後的展開都命中快取。
+  - **踩到的坑（同批修）**：`chainSubLevel` 的次產業加總原本沒有在加總後 `round(...,1)`，也沒有排序次鍵。逐檔表的走訪順序在兩條路徑不同（full 檔沿用後端 `meta.stocks` 序、lite 即時聚合是 JS 物件鍵序），浮點加總不可交換 → 總和差 1e-9，經 `fmtLot` 的 `Math.round` 放大成**張數差 1**（實測 chain/1d「IC封裝測試」46,106 vs 46,107）。現已加 `round(o.net_lots,1)`＋次鍵 `sub`；`sectorDetail` 與次產業成分股表也補了次鍵 `code`（金額同值時排名才穩定）。這與「改聚合邏輯時四捨五入一律 `jround`、排序一律帶次鍵」是同一條教訓。
+- **size**：full 的 `sector_ranges.json` ~2.5MB（逐檔表 ×5 窗，佔全檔 96.6%），lite 143KB。**full 目前仍照產照 commit**（雙格式並存、供回退）；若要拿走 git 增量成本，下一步是讓 full 不落 git（`.gitignore`），前端已經不讀它了。
 
 ## 規格後的演進（規格書未涵蓋、已實作）
 
@@ -321,7 +328,8 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 ## 待辦 / 已知限制
 
 - **未做（2026-07-25 評估時明確排除）**：三個 repo（taiwan-flows / taiwan-flow-live-v2 / taiwan-stock-news）各有一份 FinMind client，token 載入、重試、節流各寫一次、行為不一致（例如非交易日 400 只有 taiwan-flows 會炸紅）。要共用需先有套件/vendoring 機制，跨 repo 改動風險高於收益，暫不動。
-- **觀察名單**：每次 data commit 約 4.02MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB），而**每交易日實際 commit 3 次**（哨兵 17:01 首觸發＋後續哨兵／備援 cron 冪等重跑）≈ 12.5MB/交易日。2026-09-06 實測：`sector_ranges.json` 35 個版本佔 pack 44.5%、每版本 delta 後仍約 364KB；近 12 個交易日中 7 次是**只動 `generated_at` 的 no-op commit**（內容無變、純時戳）。真要處理最省事的是 `sector_ranges` 不落 git、區間 drill-down 改前端即時聚合（`runCustomRange` 那條路徑已存在且有 parity 守門）。
+- **觀察名單**：每次 data commit 約 4.02MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB），而**每交易日實際 commit 3 次**（哨兵 17:01 首觸發＋後續哨兵／備援 cron 冪等重跑）≈ 12.5MB/交易日。2026-09-06 實測：`sector_ranges.json` 35 個版本佔 pack 44.5%、每版本 delta 後仍約 364KB；近 12 個交易日中 7 次是**只動 `generated_at` 的 no-op commit**（內容無變、純時戳）。**2026-09-07 批次三 #17 已做前半**：後端改產 full＋lite 雙格式、前端 `SECTOR_SOURCE="lite"` 只讀 lite，drill-down 改前端即時聚合（見「類股資金流」節）。
+  **效益的誠實範圍**：這一步省的是**前端傳輸**（單日 579KB→36KB、r20 2.57MB→146KB，實測），**git 還沒省到**——full 仍照產照 commit，每版本 delta 364KB 照舊。真正的 git 增量效益要等 full 不落 git（`.gitignore` 掉 `sector_latest.json`／`sector_ranges.json`）：那之後每版本 364KB→約 0（lite 143KB 全檔重寫、delta 後遠小於此），但**既有 pack 不會縮**（歷史 blob 還在，除非改寫歷史，不做）。未做的原因：full 是目前唯一的回退路徑，先讓 lite 在線上跑一段時間再拆。
 - 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
 - ~~逐檔表只有買賣超「淨額」，無買/賣分項；要的話需加欄位 + 重跑回補。~~ **此項已完成**：daily schema 末尾已有 `f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（2026-07-26 核對 `data/daily/20260724.json` 實際 cols 確認，非待辦）。
 - GitHub Actions 在美國 runner 抓 TWSE/TPEx 偶爾節流；totals.py 已內建重試，若某天漏抓重跑 `backfill_market.py`。

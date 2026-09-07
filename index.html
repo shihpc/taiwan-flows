@@ -340,6 +340,18 @@ async function boot(){
 //      讓 currentSectors 的 `.then(render)` 重試路徑不會變成無限迴圈 ----
 const URL_RANGES="data/latest_ranges.json", URL_SECT_LATEST="data/sector_latest.json",
       URL_SECT_RANGES="data/sector_ranges.json", URL_CHAIN="data/industry_chain.json";
+const URL_SECT_LATEST_LITE="data/sector_latest_lite.json", URL_SECT_RANGES_LITE="data/sector_ranges_lite.json";
+// ---- 類股資金流資料源開關（2026-09-07，批次三 #17 sector_ranges 瘦身）----
+// "lite"：讀 sector_*_lite.json（35KB/143KB，只有類股摘要 classifications），
+//         點類股展開的逐檔表改用「逐日 daily 檔即時聚合」重建（buildSectorStocks →
+//         fetchDailyMany + aggregateRange + jPageSectors，與後端同口徑、tests/parity.py 守門）。
+// "full"：讀原本的 sector_latest.json / sector_ranges.json（565KB/2.5MB，自帶 stocks），
+//         drill-down 直接吃檔案裡的 stocks，一個 byte 都不必再抓。
+// 後端兩種格式並存（src/sectors.py 一次產四份），**回退只要把這個常數改回 "full"**，
+// 其餘程式不必動；lite 檔壞掉／缺檔時也可以這樣救。
+const SECTOR_SOURCE="lite";
+const SECT_LATEST_URL = SECTOR_SOURCE==="lite" ? URL_SECT_LATEST_LITE : URL_SECT_LATEST;
+const SECT_RANGES_URL = SECTOR_SOURCE==="lite" ? URL_SECT_RANGES_LITE : URL_SECT_RANGES;
 const INFLIGHT={}, FAILED={};
 function lazyJson(url){
   if(FAILED[url]) return Promise.resolve(null);
@@ -354,10 +366,10 @@ function lazyJson(url){
 async function ensureRanges(){
   if(!state.ranges) state.ranges = await lazyJson(URL_RANGES);
 }
-// sector_latest.json 約 575KB，只有「產業別/產業鏈」兩個 tab 要用（預設 tab 不需要）
-// → 與 latest_ranges / sector_ranges / industry_chain 一致改成 lazy，別擋首屏。
+// 類股單日檔只有「產業別/產業鏈」兩個 tab 要用（預設 tab 不需要）→ 與 latest_ranges /
+// industry_chain 一致改成 lazy，別擋首屏。lite 35KB / full 565KB（見 SECTOR_SOURCE）。
 async function ensureSectorLatest(){
-  if(!state.sectorLatest) state.sectorLatest = await lazyJson(URL_SECT_LATEST);
+  if(!state.sectorLatest) state.sectorLatest = await lazyJson(SECT_LATEST_URL);
 }
 function currentPages(){
   if(state.mode==="1d") return state.latest.pages;
@@ -367,7 +379,7 @@ function currentPages(){
   return state.ranges ? state.ranges.windows[state.mode].pages : null;
 }
 async function ensureSectorRanges(){
-  if(!state.sectorRanges) state.sectorRanges = await lazyJson(URL_SECT_RANGES);
+  if(!state.sectorRanges) state.sectorRanges = await lazyJson(SECT_RANGES_URL);
 }
 async function ensureChainMap(){  // 產業鏈對照（含 (產業,次產業) 配對 p）：custom 聚合 + 次產業 drill 用
   if(!state.chainMap){ const j = await lazyJson(URL_CHAIN); state.chainMap = j ? j.map : null; }
@@ -377,12 +389,12 @@ async function ensureChainMap(){  // 產業鏈對照（含 (產業,次產業) �
 function currentSectors(){
   if(state.mode==="1d"){
     if(state.sectorLatest) return state.sectorLatest;
-    if(FAILED[URL_SECT_LATEST]) return null;   // 載入失敗 → 當「不支援」顯示，別無限重試
+    if(FAILED[SECT_LATEST_URL]) return null;   // 載入失敗 → 當「不支援」顯示，別無限重試
     ensureSectorLatest().then(render); return undefined;
   }
   if(["r5","r10","r20","r65"].includes(state.mode)){
     if(state.sectorRanges) return state.sectorRanges.windows[state.mode];
-    if(FAILED[URL_SECT_RANGES]) return null;
+    if(FAILED[SECT_RANGES_URL]) return null;
     ensureSectorRanges().then(render); return undefined;
   }
   if(["custom","thisweek","thismonth","lastweek","lastmonth"].includes(state.mode)) return state.customSectors;
@@ -567,6 +579,48 @@ const fmtNum = v => (v==null?"—":v.toLocaleString("en-US"));
 const EXCH_ALIAS={"上櫃指數股票型基金(ETF)":"上櫃ETF"};
 const exchName = ind => { const s=ind&&ind!=="nan"?ind:"其他/未分類"; return EXCH_ALIAS[s]||s; };
 
+// ---- drill-down 的逐檔表（sv.stocks）----
+// full 模式與 custom/週/月（jPageSectors 現算）時 view 自帶 stocks，直接用；
+// lite 模式沒有 stocks，改用窗內的 daily 逐日檔即時聚合重建——就是 runCustomRange
+// 走了很久的那條路徑，口徑由 tests/parity.py（agg 逐檔逐欄 + 類股摘要）守門。
+// 體感取捨：換到 lite 後，第一次點某個類股要等該窗的 daily 檔下載（1d 約 2 檔、
+// r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），之後同窗的展開都命中快取
+// （state.dailyCache + sessionStorage LRU，與自訂區間共用）。
+const SECT_STOCKS={}, SECT_STOCKS_INFLIGHT={};
+// 回傳：array（可用）/ undefined（載入中，載完自動重繪）/ null（失敗，不再重試）
+function sectorStocks(sv, mode){
+  if(sv.stocks) return sv.stocks;
+  if(mode in SECT_STOCKS) return SECT_STOCKS[mode];
+  if(!SECT_STOCKS_INFLIGHT[mode]){
+    SECT_STOCKS_INFLIGHT[mode]=buildSectorStocks(sv)
+      .then(rows=>{ SECT_STOCKS[mode]=rows; })
+      .catch(e=>{ SECT_STOCKS[mode]=null; console.warn("成分股聚合失敗",e); })
+      .then(()=>{ delete SECT_STOCKS_INFLIGHT[mode]; render(); });
+  }
+  return undefined;
+}
+async function buildSectorStocks(sv){
+  await loadMeta();
+  await ensureChainMap();
+  const cal=state.meta.calendar;
+  // 窗涵蓋的交易日：lite 檔自帶 dates（後端 sectors.lite_view 寫入，與 full 的窗一致）；
+  // 萬一沒有就退回用 start/end（單日檔用 date）從行事曆切。
+  const win=(sv.dates&&sv.dates.length)?sv.dates.slice()
+           :cal.filter(d=>d>=(sv.start||sv.date)&&d<=(sv.end||sv.date));
+  if(!win.length) throw new Error("窗內無交易日");
+  const i1=cal.indexOf(win[0]);
+  const prevDate=i1>0?cal[i1-1]:null;   // 漲跌%的基準日，與 budget.aggregate 的 prev 同義
+  const need=[...new Set([...win,...(prevDate?[prevDate]:[])])].sort();
+  const docs=await fetchDailyMany(need,(i,n)=>{
+    const el=document.getElementById("sectDetail");
+    if(el&&el.classList.contains("loading")) el.textContent=`載入成分股 ${i}/${n} …`;
+  });
+  // ma20dates 刻意傳空陣列：jPageSectors 產出的逐檔列**不含 bias20**（見該函式），
+  // MA20 取樣影響不到任何欄位；傳 cal.slice(i2-19,i2+1) 只會讓 1d/r5 白抓 20 個 daily 檔。
+  const agg=aggregateRange(win,docs,state.meta,prevDate,[]);
+  return jPageSectors(agg, state.chainMap||{}).stocks;
+}
+
 function renderSectors(tab){
   const classify = tab==="exch" ? "exchange" : "chain";
   const sv = currentSectors();
@@ -600,24 +654,33 @@ function renderSectors(tab){
   html += table(cols, list);
 
   if(open){
-    if(classify==="exchange") html += `<div id="sectDetail">`+sectorDetail(sv, classify, inv, open)+`</div>`;
-    else html += `<div id="sectDetail">`+chainSubLevel(sv, inv, open, tab)+`</div>`;
+    const stocks = sectorStocks(sv, state.mode);
+    if(stocks===undefined)   html += `<div id="sectDetail" class="loading">載入成分股…</div>`;
+    else if(stocks===null)   html += `<div id="sectDetail" class="loading">成分股載入失敗（daily 逐日檔），請重新整理再試。</div>`;
+    else if(classify==="exchange") html += `<div id="sectDetail">`+sectorDetail(stocks, classify, inv, open)+`</div>`;
+    else html += `<div id="sectDetail">`+chainSubLevel(stocks, inv, open, tab)+`</div>`;
   }
   return html;
 }
 // 產業鏈第二層：產業 → 次產業排序 → （再點）成分股。配對來自 state.chainMap[code].p
-function chainSubLevel(sv, inv, industry, tab){
+function chainSubLevel(stocks, inv, industry, tab){
   const cmap=state.chainMap;
   if(!cmap) return `<div id="sectDetail" class="loading">載入產業鏈細分…</div>`;
   const [nf,af]=INV_FIELD[inv], opensub=state.sub[tab].opensub, b={};
-  for(const r of (sv.stocks||[])){
+  for(const r of (stocks||[])){
     if(!(r.chain||[]).includes(industry)) continue;
     const cm=cmap[r.code]; if(!cm||!cm.p) continue;
     const subs=[...new Set(cm.p.filter(p=>p[0]===industry).map(p=>p[1]))];
     for(const s of subs){ const o=b[s]||(b[s]={sub:s,net_amt_k:0,net_lots:0,n:0,n_buy:0,n_sell:0});
       o.net_amt_k+=r[af]; o.net_lots+=r[nf]; o.n++; if(r[nf]>0)o.n_buy++; else if(r[nf]<0)o.n_sell++; }
   }
-  const subs=Object.values(b).filter(o=>o.net_amt_k!==0||o.net_lots!==0).sort((x,y)=>y.net_amt_k-x.net_amt_k);
+  // net_lots 加總後**一定要 round 到 1 位**（與 jPageSectors/sectors.summarize 同做法）：
+  // 每列都是 0.1 的倍數，但浮點加總不可交換——逐檔表的走訪順序不同（full 檔沿用後端
+  // meta.stocks 序、lite 即時聚合是 JS 物件鍵序）會讓總和差 1e-9，經 fmtLot 的
+  // Math.round 放大成「張數差 1」。排序同樣帶次鍵 sub，同分時兩條路徑排名才一致。
+  const subs=Object.values(b).map(o=>({...o,net_lots:round(o.net_lots,1)}))
+    .filter(o=>o.net_amt_k!==0||o.net_lots!==0)
+    .sort((x,y)=>(y.net_amt_k-x.net_amt_k)||(x.sub<y.sub?-1:x.sub>y.sub?1:0));
   let html=`<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${esc(industry)}</b> · ${INV_LABEL[inv]} · ${subs.length} 次產業（點看成分股；再點上方類股可收合）</div>`;
   const cols=[
     {h:"次產業",f:r=>`<span class="subsectlink" data-sub="${encodeURIComponent(r.sub)}" style="cursor:pointer;white-space:nowrap;border-bottom:1px ${opensub===r.sub?'solid':'dotted'} currentColor;font-weight:${opensub===r.sub?700:'inherit'}">${esc(r.sub)}</span>`},
@@ -627,9 +690,10 @@ function chainSubLevel(sv, inv, industry, tab){
     {h:"買/賣",f:r=>`<span class="up">${r.n_buy}</span> / <span class="down">${r.n_sell}</span>`}];
   html += table(cols, subs);
   if(opensub){
-    const rows=(sv.stocks||[]).filter(r=>{const cm=cmap[r.code]; return cm&&cm.p&&cm.p.some(p=>p[0]===industry&&p[1]===opensub);})
+    const rows=(stocks||[]).filter(r=>{const cm=cmap[r.code]; return cm&&cm.p&&cm.p.some(p=>p[0]===industry&&p[1]===opensub);})
       .map(r=>({code:r.code,name:r.name,net:r[nf],amt:r[af],chg:r.chg_pct,close:r.close}))
-      .filter(r=>r.net!==0||r.amt!==0).sort((a,b)=>(b.amt||0)-(a.amt||0));
+      .filter(r=>r.net!==0||r.amt!==0)
+      .sort((a,b)=>((b.amt||0)-(a.amt||0))||(a.code<b.code?-1:a.code>b.code?1:0));
     const scols=[COL_CODE,COL_NAME,
       {h:"買賣超",f:r=>sign(r.amt,fmtYi(r.amt))},{h:"張數",f:r=>sign(r.net,fmtLot(r.net))},
       {h:"漲跌",f:r=>chg(r.chg)},{h:"收盤",f:r=>r.close==null?"—":r.close.toLocaleString("en-US")}];
@@ -663,13 +727,14 @@ function jPageSectors(agg, chainMap){
     chain:{many_to_many:true,...mk("chain"),coverage:{stocks_with_chain:cov,stocks_total:stocks.length,excludes:"ETF/權證等無產業鏈分類者"}}
   }, stocks};
 }
-function sectorDetail(sv, classify, inv, sector){
+function sectorDetail(stocks, classify, inv, sector){
   const [nf,af]=INV_FIELD[inv];
-  const rows = (sv.stocks||[])
+  const rows = (stocks||[])
     .filter(r => classify==="exchange" ? r.exch===sector : (r.chain||[]).includes(sector))
     .map(r => ({code:r.code,name:r.name,net:r[nf],amt:r[af],chg:r.chg_pct,close:r.close}))
     .filter(r => r.net!==0 || r.amt!==0)
-    .sort((a,b)=> (b.amt||0)-(a.amt||0));
+    // 次鍵 code：金額同值時，逐檔表來自 full 檔或即時聚合的走訪順序不同會排出不同名次
+    .sort((a,b)=> ((b.amt||0)-(a.amt||0))||(a.code<b.code?-1:a.code>b.code?1:0));
   const cols=[COL_CODE,COL_NAME,
     {h:"買賣超",f:r=>sign(r.amt,fmtYi(r.amt))},
     {h:"張數",f:r=>sign(r.net,fmtLot(r.net))},
