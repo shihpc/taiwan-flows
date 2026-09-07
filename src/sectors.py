@@ -17,7 +17,7 @@
 #         ——含逐檔 stocks 表（前端點類股 → filter+sort 展開個股）
 #   lite：data/sector_latest_lite.json、data/sector_ranges_lite.json
 #         ——只有類股摘要 classifications ＋ 窗 meta（dates/n），不含 stocks。
-#         stocks 佔 full 檔 96%（2.5MB 中的 2.48MB）但只有 drill-down 用得到，
+#         stocks 佔 full 檔 94.3%（2,568,707B 中的 2,422,557B，2026-09-07 實測）但只有 drill-down 用得到，
 #         每日重算又幾乎全檔改寫（git delta 後仍約 364KB/版本、佔 pack 44.5%）。
 #         前端改讀 lite，drill-down 時用逐日 daily 檔即時聚合重建同一份逐檔表
 #         （index.html buildSectorStocks → aggregateRange + jPageSectors，

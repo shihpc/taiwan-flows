@@ -44,6 +44,17 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      # tests/ 底下的 pytest 測試原本沒有任何 CI 在跑（parity.yml 只跑 tests/parity.py，
+      # requirements.txt 也沒有 pytest），test_sanitize／test_noop_guard／test_status_classify／
+      # test_sectors_lite／test_trading_day 五支形同虛設。就地裝 pytest，不進 requirements.txt
+      # ——那支同時被 daily.yml／verify.yml 的生產 runner 安裝，生產路徑不需要測試框架。
+      # 殘餘盲區：每日 data commit 帶 [skip ci] 不觸發本 workflow，對「現行 data/ 產出」
+      # 斷言的 test_sectors_lite 只會在下次 src/** 或 index.html 變更時才跑到。
+      - name: Unit tests（pytest）
+        run: |
+          pip install pytest
+          python -m pytest tests/ -q
+
       - name: Parity（5 個視窗全比）
         run: python tests/parity.py --n 1 5 10 20 65
 

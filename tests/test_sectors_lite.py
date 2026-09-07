@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """sector_*_lite.json 瘦身版產出的守門測試——免 token、免網路。
 
-批次三 #17：`sector_ranges.json` 2.5MB 中有 96.6% 是逐檔 `stocks` 表，前端只在
+批次三 #17：`sector_ranges.json` 2,568,707B 中有 94.3% 是逐檔 `stocks` 表（2026-09-07 實測），前端只在
 drill-down（點類股→成分股）用得到，卻每天整檔改寫（git delta 後仍約 364KB/版本）。
 現在後端同時產 lite（只有類股摘要）與 full（原格式，供回退），前端讀 lite、
 drill-down 改走「逐日 daily 檔即時聚合」。
