@@ -12,8 +12,17 @@
 #   - 交易所產業別來自 meta.stocks[code].industry（既有，免費）。
 #   - 產業鏈來自 data/industry_chain.json（snapshot，--build-chain 產生；變動慢，不必每日抓）。
 #
-# 輸出（前端純讀，點類股 → 用 stocks 表 filter+sort 展開個股）：
-#   data/sector_latest.json（單日）、data/sector_ranges.json（r5/r10/r20/r65）
+# 輸出（雙格式並存，前端以 index.html 的 SECTOR_SOURCE 常數選用、可一鍵回退）：
+#   full：data/sector_latest.json（單日）、data/sector_ranges.json（r5/r10/r20/r65）
+#         ——含逐檔 stocks 表（前端點類股 → filter+sort 展開個股）
+#   lite：data/sector_latest_lite.json、data/sector_ranges_lite.json
+#         ——只有類股摘要 classifications ＋ 窗 meta（dates/n），不含 stocks。
+#         stocks 佔 full 檔 96%（2.5MB 中的 2.48MB）但只有 drill-down 用得到，
+#         每日重算又幾乎全檔改寫（git delta 後仍約 364KB/版本、佔 pack 44.5%）。
+#         前端改讀 lite，drill-down 時用逐日 daily 檔即時聚合重建同一份逐檔表
+#         （index.html buildSectorStocks → aggregateRange + jPageSectors，
+#          口徑由 tests/parity.py 守門）。lite 與 full 的 classifications 逐位相同，
+#         由 tests/test_sectors_lite.py 守門。
 #
 # 口徑提醒（前端徽章需標示）：
 #   - chain 是多對多：一檔掛多節點，各節點加總會重疊、≠大盤、不可讀成市佔（主題曝險）。
@@ -46,6 +55,8 @@ DATA = ROOT / "data"
 CHAIN_PATH = DATA / "industry_chain.json"
 LATEST_PATH = DATA / "sector_latest.json"
 RANGES_PATH = DATA / "sector_ranges.json"
+LATEST_LITE_PATH = DATA / "sector_latest_lite.json"
+RANGES_LITE_PATH = DATA / "sector_ranges_lite.json"
 TPE = timezone(timedelta(hours=8))
 
 UNCLASSIFIED = "其他/未分類"
@@ -181,6 +192,22 @@ def build_view(agg: dict, chain_map: dict[str, list[str]]) -> dict:
     return {"classifications": classifications, "stocks": rows}
 
 
+def lite_view(view: dict, dates: list[str]) -> dict:
+    """完整 view（build_view 產出）→ lite view：丟掉逐檔 stocks，保留 classifications。
+
+    - `classifications` 直接沿用同一個物件、不重算也不改寫 → lite 與 full 的類股摘要
+      必然逐位相同（tests/test_sectors_lite.py 以現行 data/ 產出實測守門）。
+    - 另補兩個 meta：`dates`＝這個窗涵蓋的交易日（前端 drill-down 要據此抓 daily
+      逐日檔重建逐檔表，不能只靠 start/end 猜）、`stocks_n`＝被丟掉的逐檔列數
+      （供人工核對／除錯，前端不依賴）。
+    """
+    return {
+        "dates": list(dates),
+        "stocks_n": len(view.get("stocks") or []),
+        "classifications": view["classifications"],
+    }
+
+
 # ════════════════════════════════════════════════════════════════
 # 主程式
 # ════════════════════════════════════════════════════════════════
@@ -203,21 +230,33 @@ def main(argv: list[str] | None = None) -> None:
     d2 = dates[-1]
     logger.info(f"最近交易日 {d2}，共 {len(dates)} 交易日；產業鏈對照 {len(chain_map)} 檔")
 
-    # 單日
-    latest = {"date": d2, "generated_at": datetime.now(TPE).isoformat(), "window": "1d",
-              **build_view(budget.aggregate(dates, docs, meta, 1), chain_map)}
-    LATEST_PATH.write_text(json.dumps(latest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    logger.info(f"已寫入 sector_latest.json（{LATEST_PATH.stat().st_size/1024:.0f} KB）")
+    def dump(obj) -> str:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
-    # 區間
-    ranges = {"date": d2, "generated_at": datetime.now(TPE).isoformat(), "windows": {}}
+    # 單日（full ＋ lite 同一份 view、同一個 generated_at）
+    gen = datetime.now(TPE).isoformat()
+    latest_view = build_view(budget.aggregate(dates, docs, meta, 1), chain_map)
+    head = {"date": d2, "generated_at": gen, "window": "1d"}
+    LATEST_PATH.write_text(dump({**head, **latest_view}), encoding="utf-8")
+    LATEST_LITE_PATH.write_text(dump({**head, **lite_view(latest_view, [d2])}), encoding="utf-8")
+    logger.info(f"已寫入 sector_latest.json（{LATEST_PATH.stat().st_size/1024:.0f} KB）"
+                f"＋ sector_latest_lite.json（{LATEST_LITE_PATH.stat().st_size/1024:.0f} KB）")
+
+    # 區間（同上，逐窗各產一份 full 與 lite）
+    gen = datetime.now(TPE).isoformat()
+    ranges = {"date": d2, "generated_at": gen, "windows": {}}
+    ranges_lite = {"date": d2, "generated_at": gen, "windows": {}}
     for key, n in budget.WINDOWS.items():
         win = dates[-n:] if n <= len(dates) else dates
-        ranges["windows"][key] = {"trading_days": len(win), "start": win[0], "end": win[-1],
-                                  **build_view(budget.aggregate(dates, docs, meta, n), chain_map)}
+        wmeta = {"trading_days": len(win), "start": win[0], "end": win[-1]}
+        view = build_view(budget.aggregate(dates, docs, meta, n), chain_map)
+        ranges["windows"][key] = {**wmeta, **view}
+        ranges_lite["windows"][key] = {**wmeta, **lite_view(view, win)}
         logger.info(f"  {key}: {len(win)} 交易日（{win[0]} ~ {win[-1]}）")
-    RANGES_PATH.write_text(json.dumps(ranges, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    logger.info(f"已寫入 sector_ranges.json（{RANGES_PATH.stat().st_size/1024:.0f} KB）")
+    RANGES_PATH.write_text(dump(ranges), encoding="utf-8")
+    RANGES_LITE_PATH.write_text(dump(ranges_lite), encoding="utf-8")
+    logger.info(f"已寫入 sector_ranges.json（{RANGES_PATH.stat().st_size/1024:.0f} KB）"
+                f"＋ sector_ranges_lite.json（{RANGES_LITE_PATH.stat().st_size/1024:.0f} KB）")
 
 
 if __name__ == "__main__":

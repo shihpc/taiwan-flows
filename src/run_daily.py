@@ -190,7 +190,7 @@ def rebuild_products() -> None:
     """由現成 daily 重算所有衍生產出（不打 FinMind 逐檔 API）。
 
     run_daily 與 verify_daily（延後驗證重抓後）共用：只要 data/daily 變了，
-    latest / latest_ranges / foreign_history / sector_* 都要跟著重算。
+    latest / latest_ranges / foreign_history / sector_*（含 _lite 瘦身版）都要跟著重算。
     各子模組的 main 皆接受 argv，明確傳 [] 表示「不吃上層 CLI 參數」。
     """
     logger.info("重算 latest.json + latest_ranges.json …")
@@ -205,7 +205,9 @@ def rebuild_products() -> None:
 
     # 類股資金流（交易所產業別 / 產業鏈）— 非致命；讀現成 daily，不再打 FinMind
     try:
-        logger.info("重算 sector_latest.json + sector_ranges.json …")
+        # sectors.main 一次產四份：full（sector_latest/ranges.json，供 SECTOR_SOURCE="full" 回退）
+        # ＋ lite（sector_*_lite.json，前端預設讀，不含逐檔 stocks）
+        logger.info("重算 sector_latest/ranges.json ＋ sector_*_lite.json …")
         sectors.main([])
     except Exception as e:
         logger.warning(f"sectors 失敗（略過）：{e}")
