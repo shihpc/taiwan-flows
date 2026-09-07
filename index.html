@@ -334,7 +334,9 @@ async function boot(){
   { const el=document.getElementById("status");  // 右上角狀態詞：與頂列「狀態：」同一套語意（siteStatus）
     const ss=siteStatus(); el.textContent=ss.label; el.className="status"+(ss.cls?" "+ss.cls:""); el.title=ss.title; }
   renderTotCard();
-  render();
+  // 有 hash 才走 applyHash（無 hash 時 applyHash 只會把 state 設成與初值相同的預設，
+  // 走原路徑可少一輪判斷，也讓「沒帶 hash 的首載」行為與加此功能前完全一致）
+  if(location.hash) await applyHash(); else render();
 }
 // ---- lazy JSON：同一支檔案被多次 render 同時要求時只發一個請求；失敗記進 FAILED，
 //      讓 currentSectors 的 `.then(render)` 重試路徑不會變成無限迴圈 ----
@@ -996,7 +998,11 @@ function fitScrollbox(){
     box.style.maxHeight=Math.max(160, Math.floor(window.innerHeight-top-14))+"px";
   });
 }
-function render(){
+// render() 內部有多處早退（foreignflows / exch-chain / custom 未查詢 / 區間載入失敗），
+// 所以 hash 的寫回不能直接接在函式尾巴：實際內容改叫 renderMain()，render() 是「畫完就把
+// 網址同步成當前狀態」的薄包裝。全站既有的 render() 呼叫點（含 .then(render)）語意不變。
+function render(){ renderMain(); syncHash(); }
+function renderMain(){
   for(const k in TABLES) delete TABLES[k];  // 清掉上一輪表格註冊
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
@@ -1050,32 +1056,153 @@ function bindSegs(){
   if(est) est.onclick=()=>{ state.etfStatsOpen=(state.etfStatsOpen===false); saveCardState(); render(); };
 }
 
+// ================= hash 路由（2026-09-07，批次三 #15）=================
+// 網址形狀：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=`，**只放非預設值**
+// （全預設時 hash 為空、網址不留 `#`）。與 postmkt／taiwan-stock-news 同一套設計：
+//   ・寫出 syncHash() 走 history.replaceState —— **不塞歷史、不觸發 hashchange**
+//     （切 tab／改 mode／drill 都不會讓 history.length 增加，返回鍵行為與加此功能前相同）
+//   ・外部改網址／貼連結／返回鍵 → hashchange → applyHash()
+//   ・讀入一律**白名單＋型別檢查**，非法值靜默退回預設，絕不炸、絕不直接進 DOM
+// 類股／次產業名是中文且可能含 `&`、`(`：進 hash 一律 encodeURIComponent，讀出
+// decodeURIComponent 包 try/catch（壞的 %-encoding 會 throw）；解出來的字串**只拿去比對
+// 既有清單**（sector 比 sector_*_lite.json 的 classifications、次產業比 industry_chain.json
+// 的 (產業,次產業) 配對），比對不到就丟棄 —— 因此永遠不會有外來字串被拼進 innerHTML。
+const HASH_MAX=1600, HASH_VAL_MAX=512;   // 整段／單值長度上限；超過即整段／該鍵丟棄（防超長網址）
+// tab／mode 白名單直接從 DOM 取，日後增刪分頁不會與這裡脫節
+const hashTabs=()=>[...document.querySelectorAll(".tab")].map(t=>t.dataset.tab);
+const hashModes=()=>[...document.querySelectorAll(".mode")].map(m=>m.dataset.mode);
+const WEEK_MODES=["thisweek","thismonth","lastweek","lastmonth"];
+const RANGE_MODES=["r5","r10","r20","r65"];
+const DEF_TAB="foreign", DEF_MODE="1d";
+// 各 tab 的 seg 白名單與預設值 —— 值域與 render* 產生的 data-v、state.sub 初值逐一對應。
+// prop：hash key 與 state.sub 欄位名不同時的對照（etype → state.sub.etf.type）。
+const HASH_SEG={
+  foreign:{side:{ok:["buy","sell"],def:"buy"},   rank:{ok:["amt","chg","vol"],def:"amt"}},
+  trust:  {side:{ok:["buy","sell"],def:"buy"},   rank:{ok:["amt","chg","vol"],def:"amt"}},
+  sync:   {side:{ok:["buy","sell"],def:"buy"}},
+  oppose: {side:{ok:["fbuy","fsell"],def:"fbuy"}},
+  etf:    {rank:{ok:["mktcap","turnover"],def:"mktcap"}, etype:{ok:["stock","bond"],def:"stock",prop:"type"}},
+  exch:   {inv:{ok:["total","foreign","trust","dealer"],def:"total"}},
+  chain:  {inv:{ok:["total","foreign","trust","dealer"],def:"total"}}
+};
+const isYmd=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s);
+function parseHash(){
+  const out={}, raw=(location.hash||"").replace(/^#/,"");
+  if(!raw||raw.length>HASH_MAX) return out;          // 超長：整段丟棄，全部退回預設
+  for(const part of raw.split("&")){
+    const i=part.indexOf("=");
+    if(i<1) continue;
+    const k=part.slice(0,i), v=part.slice(i+1);
+    if(!/^[a-z0-9]{1,6}$/.test(k)||v.length>HASH_VAL_MAX) continue;
+    try{ out[k]=decodeURIComponent(v); }catch(e){}   // 壞的 %-encoding：丟掉這個鍵，不影響其他鍵
+  }
+  return out;
+}
+// 由 state 組出當前 hash（只含非預設值；只輸出「當前 tab 用得到」的鍵）
+function currentHash(){
+  const p=[], add=(k,v)=>p.push(k+"="+encodeURIComponent(v));
+  if(state.tab!==DEF_TAB) add("tab",state.tab);
+  if(state.mode!==DEF_MODE) add("mode",state.mode);
+  // 自訂區間才放 d1/d2（本週/上週/上月的起訖由 mode 本身決定，放了反而會在資料日推進後互相矛盾）
+  if(state.mode==="custom"&&state.customMeta&&state.customMeta.kind==="custom"){
+    add("d1",state.customMeta.d1); add("d2",state.customMeta.d2);
+  }
+  const segs=HASH_SEG[state.tab]||{}, sub=state.sub[state.tab]||{};
+  for(const k in segs){ const cfg=segs[k], v=sub[cfg.prop||k]; if(v!=null&&v!==cfg.def) add(k,v); }
+  if(state.tab==="exch"||state.tab==="chain"){
+    if(sub.open) add("sec",sub.open);
+    if(state.tab==="chain"&&sub.opensub) add("sub",sub.opensub);
+  }
+  return p.join("&");
+}
+let hashBusy=0;   // >0＝applyHash 進行中，中途的 render 不要把半套狀態寫回網址
+function syncHash(){
+  if(hashBusy) return;
+  const h=currentHash(), base=location.pathname+location.search;
+  const url=base+(h?"#"+h:"");
+  if(url===base+location.hash) return;              // 沒變就不寫（連 replaceState 都省）
+  try{ history.replaceState(null,"",url); }catch(e){}   // 極端情境（file:// 等）靜默忽略
+}
+// 依 mode 準備所需資料，**不 render**；mode 鈕與 hash 套用共用同一條路徑。
+// 回傳 false＝runCustomRange 提早退出並已在畫面留下訊息，呼叫端不要再 render 蓋掉它。
+async function ensureModeData(mode, custom){
+  if(mode==="custom"){
+    await loadMeta();
+    if(custom) return await runCustomRange(custom.d1,custom.d2,"custom",true);
+    // 從本週/上週切回自訂時，清掉預設結果，回到日期選擇器
+    if(state.customMeta&&state.customMeta.kind!=="custom"){ state.customPages=null; state.customMeta=null; }
+    return true;
+  }
+  if(WEEK_MODES.includes(mode)){
+    await loadMeta();
+    const {start,end}=weekRange(mode);
+    return await runCustomRange(start,end,mode,true);
+  }
+  if(mode!=="1d") await ensureRanges();
+  return true;
+}
+const modeMsg=mode=>mode==="custom"?"載入交易日曆…":WEEK_MODES.includes(mode)?"載入區間資料…":mode!=="1d"?"載入區間…":null;
+// 類股 drill 的白名單比對：sec 必須出現在該窗 classifications 的類股清單裡，
+// sub 必須是 industry_chain 裡「該產業底下真實存在」的次產業配對；否則整個丟棄退回未展開。
+async function applyHashSector(tab, sec, sub){
+  const classify=tab==="exch"?"exchange":"chain";
+  let sv=null;
+  if(state.mode==="1d"){ await ensureSectorLatest(); sv=state.sectorLatest; }
+  else if(RANGE_MODES.includes(state.mode)){ await ensureSectorRanges(); sv=state.sectorRanges&&state.sectorRanges.windows[state.mode]; }
+  else sv=state.customSectors;
+  const cls=sv&&sv.classifications&&sv.classifications[classify];
+  if(!cls||!cls.investors) return;
+  let hit=false;
+  for(const k in cls.investors){ if((cls.investors[k]||[]).some(r=>r.sector===sec)){ hit=true; break; } }
+  if(!hit) return;
+  state.sub[tab].open=sec;
+  if(tab!=="chain"||!sub) return;
+  await ensureChainMap();
+  const cm=state.chainMap; if(!cm) return;
+  for(const code in cm){ const pr=cm[code]&&cm[code].p;
+    if(pr&&pr.some(x=>x[0]===sec&&x[1]===sub)){ state.sub.chain.opensub=sub; return; } }
+}
+// 讀網址 → 套進 state → render。任何一步出錯都退回預設，不讓整頁卡住。
+async function applyHash(){
+  hashBusy++;
+  let ok=true;
+  try{
+    const h=parseHash();
+    state.tab=hashTabs().includes(h.tab)?h.tab:DEF_TAB;
+    const segs=HASH_SEG[state.tab]||{};
+    for(const k in segs){ const cfg=segs[k];
+      state.sub[state.tab][cfg.prop||k]=cfg.ok.includes(h[k])?h[k]:cfg.def; }
+    state.mode=hashModes().includes(h.mode)?h.mode:DEF_MODE;
+    let custom=null;
+    if(state.mode==="custom"&&isYmd(h.d1)&&isYmd(h.d2)&&h.d1<=h.d2){
+      await loadMeta();
+      const cal=state.meta&&state.meta.calendar;
+      // 只要與行事曆有交集就交給 runCustomRange（它自己會夾到交易日、上限 65 天）
+      if(cal&&cal.length&&h.d2>=cal[0]&&h.d1<=cal[cal.length-1]) custom={d1:h.d1,d2:h.d2};
+    }
+    ok=await ensureModeData(state.mode,custom);
+    if(state.tab==="exch"||state.tab==="chain"){
+      state.sub[state.tab].open=null;
+      if(state.tab==="chain") state.sub.chain.opensub=null;
+      if(h.sec) await applyHashSector(state.tab,h.sec,h.sub);
+    }
+  }catch(e){ console.warn("hash 套用失敗，退回預設",e); }
+  finally{ hashBusy--; }
+  if(ok!==false) render();
+}
+// 只有「外部改網址／貼連結／返回鍵」會進來——syncHash 走 replaceState 不觸發本事件
+window.addEventListener("hashchange",()=>{ applyHash(); });
+
 // ---------- nav ----------
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{ state.tab=t.dataset.tab; render(); });
 { let rz; window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(fitScrollbox,120); }); }
 document.querySelectorAll(".mode").forEach(m=>m.onclick=async()=>{
   const mode=m.dataset.mode;
   state.mode=mode;
-  if(mode==="custom"){
-    document.getElementById("main").innerHTML='<div class="loading">載入交易日曆…</div>';
-    await loadMeta();
-    // 從本週/上週切回自訂時，清掉預設結果，回到日期選擇器
-    if(state.customMeta && state.customMeta.kind!=="custom"){ state.customPages=null; state.customMeta=null; }
-    render();
-    return;
-  }
-  if(mode==="thisweek"||mode==="thismonth"||mode==="lastweek"||mode==="lastmonth"){
-    document.getElementById("main").innerHTML='<div class="loading">載入區間資料…</div>';
-    await loadMeta();
-    const {start,end}=weekRange(mode);
-    await runCustomRange(start,end,mode);
-    return;
-  }
-  if(mode!=="1d"){
-    document.getElementById("main").innerHTML='<div class="loading">載入區間…</div>';
-    await ensureRanges();
-  }
-  render();
+  const msg=modeMsg(mode);
+  if(msg) document.getElementById("main").innerHTML=`<div class="loading">${msg}</div>`;
+  // 載入邏輯抽進 ensureModeData（與 hash 套用共用）；回 false＝已在畫面留訊息，別再 render 蓋掉
+  if(await ensureModeData(mode)!==false) render();
 });
 // ================= custom range (browser-side aggregation, mirrors budget.py) =================
 async function loadMeta(){ if(!state.meta) state.meta = await (await fetch("data/meta.json",{cache:"no-cache"})).json(); return state.meta; }
@@ -1280,12 +1407,12 @@ function weekRange(which){
   const lf=new Date(lm); lf.setDate(lm.getDate()+4);                 // 前週五
   return {start:fmtDate(lm), end:fmtDate(lf)};
 }
-async function runCustomRange(startStr,endStr,kind="custom"){
+async function runCustomRange(startStr,endStr,kind="custom",noRender){
   await loadMeta();
   const cal=state.meta.calendar;
-  if(!startStr||!endStr||startStr>endStr){ pickerMsg("請選擇有效的起迄日"); return; }
+  if(!startStr||!endStr||startStr>endStr){ pickerMsg("請選擇有效的起迄日"); return false; }
   let inRange=cal.filter(d=>d>=startStr&&d<=endStr);
-  if(inRange.length===0){ pickerMsg("區間內無交易日資料"); return; }
+  if(inRange.length===0){ pickerMsg("區間內無交易日資料"); return false; }
   let truncated=false;
   if(inRange.length>65){ inRange=inRange.slice(-65); truncated=true; }
   const d1=inRange[0], d2=inRange[inRange.length-1];
@@ -1309,7 +1436,8 @@ async function runCustomRange(startStr,endStr,kind="custom"){
   await ensureChainMap();
   state.customSectors=jPageSectors(agg, state.chainMap);  // 類股資金流（custom/週/月）
   state.customMeta={d1,d2,n:inRange.length,truncated,kind};
-  render();
+  if(!noRender) render();   // noRender：呼叫端（mode 鈕／hash 套用）自己收尾，避免連render兩次
+  return true;
 }
 
 // ================= Excel 匯出（列印導向：直向 A4、字 10、每表 Top10、每張單頁）=================

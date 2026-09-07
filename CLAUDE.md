@@ -167,6 +167,28 @@ GitHub Pages
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
 - **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
+- **hash 路由（2026-09-07，批次三 #15）**：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=`，
+  **只放非預設值**（全預設時網址不留 `#`）。`parseHash()`／`currentHash()`／`syncHash()`／
+  `ensureModeData()`／`applyHashSector()`／`applyHash()`（`index.html:1089`／`:1102`／`:1119`／
+  `:1128`／`:1147`／`:1166`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004-1005`）
+  ——原本的內容改叫 `renderMain()`，因為它有 5 處早退，寫回不能直接接在尾巴。載入時由 `boot()`
+  結尾 `if(location.hash) await applyHash(); else render();`（`:339`）套用；外部改網址／貼連結／
+  返回鍵走 `hashchange`（`:1194`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
+  hashchange）**——實測切 tab／改 mode／drill 兩層 `history.length` 皆不變。
+  - **key 語意**：`tab`＝8 個 `data-tab` 值；`mode`＝10 個 `data-mode` 值；`d1`／`d2`＝**只有
+    `mode=custom` 且真的查詢過**才寫（`state.customMeta.kind==="custom"`），本週/上週/上月的起訖
+    由 mode 本身決定、刻意不寫（寫了會在資料日推進後與 mode 互相矛盾）；`side`／`rank`／`etype`
+    ＝各 tab 的 seg（`etype` 對到 `state.sub.etf.type`）；`inv`＝法人別；`sec`＝展開的類股；
+    `sub`＝`chain` 第二層次產業。**只輸出當前 tab 用得到的鍵**。
+  - **白名單規則**（表在 `HASH_SEG`／`:1079`；tab、mode 清單直接從 DOM 取，增刪分頁不會脫節）：
+    整段 >1600 字元或單值 >512 字元即丟棄；key 須符合 `^[a-z0-9]{1,6}$`；`decodeURIComponent`
+    包 try/catch（壞的 `%zz` 只丟該鍵、不炸）；`d1`／`d2` 須 `YYYY-MM-DD`、`d1<=d2` 且與
+    `meta.calendar` 有交集（實際夾到交易日與 65 天上限仍由 `runCustomRange` 做，所以 hash 的
+    逐日 fetch 成本上限與手動點選相同）；`sec` 須出現在該窗 `classifications` 的類股清單裡、
+    `sub` 須是 `industry_chain.json` 裡該產業底下真實存在的 (產業,次產業) 配對——**解出來的字串
+    只拿去比對既有清單，比對不到就丟棄，永遠不會被拼進 `innerHTML`**。非法值一律靜默退回預設。
+  - `runCustomRange` 多一個 `noRender` 參數並回傳 bool（`false`＝提早退出、畫面已有訊息，
+    呼叫端不要再 render 蓋掉）；mode 鈕與 `applyHash` 共用 `ensureModeData()` 這條載入路徑。
 - **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`loadSiteVer()` 在 `index.html:1535`、footer `#siteVer` 在 `:254`；2026-09-06 依實測更正行號與配對順序）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
