@@ -10,6 +10,10 @@
   4. verify_daily.resolve_date：優先 status.json 的預期交易日，不回退到 data/daily 昨天的檔。
 
 日期一律相對「現在」計算、不寫死（claude-harness lessons 2026-09-03：寫死日期＝時間炸彈）。
+日期錨的規則（2026-09-07 補）：相對日期的**星期屬性也要固定**——WEEKDAY 錨在「最近的週三」、
+PREV_WEEKDAY＝其前一日（必為週二）、WEEKEND＝該週三之前的週六；三者兩兩不同日、星期屬性
+在一週七天任何一天跑都成立。原本取「最近的平日／最近的週末」，週一跑時 prev_day（週日）會撞上
+WEEKEND，被 classify_no_data 的 meta.calendar 規則當成確定交易日 → no_data 案例誤判 missing。
 """
 from __future__ import annotations
 
@@ -39,8 +43,10 @@ def _recent(pred, start: date = TODAY) -> date:
     return d
 
 
-WEEKDAY = _recent(lambda d: d.weekday() < 5)          # 最近的平日
-WEEKEND = _recent(lambda d: d.weekday() >= 5)         # 最近的週末
+WEEKDAY = _recent(lambda d: d.weekday() == 2)                          # 最近的週三（錨）
+PREV_WEEKDAY = WEEKDAY - timedelta(days=1)                              # 必為週二（平日）
+WEEKEND = _recent(lambda d: d.weekday() == 5, start=WEEKDAY)           # 該週三之前的週六
+assert PREV_WEEKDAY.weekday() == 1 and WEEKEND < PREV_WEEKDAY < WEEKDAY  # 錨的不變式
 DEADLINE_H = run_daily.PUBLISH_DEADLINE_HOUR
 
 
@@ -102,7 +108,7 @@ class _Frozen:
 def tmp_data(tmp_path, monkeypatch):
     """把 run_daily 的 DATA/STATUS_PATH 指到暫存目錄，種一個「昨天」的 daily 檔與舊 status。"""
     (tmp_path / "daily").mkdir()
-    prev_day = WEEKDAY - timedelta(days=1)
+    prev_day = PREV_WEEKDAY   # 週二：不可與 WEEKEND 同日，否則 calendar 會把週末當確定交易日
     (tmp_path / "daily" / f"{prev_day:%Y%m%d}.json").write_text('{"rows":[]}', encoding="utf-8")
     (tmp_path / "meta.json").write_text(json.dumps({"calendar": [prev_day.isoformat()]}), encoding="utf-8")
     old_success = "2000-01-01T00:00:00+08:00"
@@ -192,7 +198,7 @@ def test_worst_severity():
 # ---------- 4. verify 日期選取不回退到昨天 ----------
 
 def test_verify_resolve_date_prefers_expected_date(monkeypatch):
-    today, yday = WEEKDAY.isoformat(), (WEEKDAY - timedelta(days=1)).isoformat()
+    today, yday = WEEKDAY.isoformat(), PREV_WEEKDAY.isoformat()
     monkeypatch.setattr(healthcheck, "latest_daily_date", lambda: yday)   # 當天沒產檔，末檔是昨天
     st = {"date": today, "status": "missing", "expected_date": today}
     assert verify_daily.resolve_date(None, st) == today
