@@ -173,7 +173,7 @@ GitHub Pages
   `:1135`／`:1154`／`:1173`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004`）；外框（分頁／模式 active＋資料日列）抽成 `renderChrome()`（`:1009`），供 `applyHash` 早退時只補外框不動 `#main`
   ——原本的內容改叫 `renderMain()`，因為它有 5 處早退，寫回不能直接接在尾巴。載入時由 `boot()`
   結尾 `if(location.hash) await applyHash(); else render();`（`:339`）套用；外部改網址／貼連結／
-  返回鍵走 `hashchange`（`:1194`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
+  返回鍵走 `hashchange`（`:1202`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
   hashchange）**——實測切 tab／改 mode／drill 兩層 `history.length` 皆不變。
   - **key 語意**：`tab`＝8 個 `data-tab` 值；`mode`＝10 個 `data-mode` 值；`d1`／`d2`＝**只有
     `mode=custom` 且真的查詢過**才寫（`state.customMeta.kind==="custom"`），本週/上週/上月的起訖
@@ -189,7 +189,7 @@ GitHub Pages
     只拿去比對既有清單，比對不到就丟棄，永遠不會被拼進 `innerHTML`**。非法值一律靜默退回預設。
   - `runCustomRange` 多一個 `noRender` 參數並回傳 bool（`false`＝提早退出、畫面已有訊息，
     呼叫端不要再 render 蓋掉）；mode 鈕與 `applyHash` 共用 `ensureModeData()` 這條載入路徑。
-- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`loadSiteVer()` 在 `index.html:1535`、footer `#siteVer` 在 `:254`；2026-09-06 依實測更正行號與配對順序）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
+- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`loadSiteVer()` 在 `index.html:1736`、footer `#siteVer` 在 `:254`；2026-09-07 全檔行號主張逐一重量）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
 - **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
 - **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
 - **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
@@ -216,7 +216,7 @@ GitHub Pages
 | Excel 下載 | `URL.createObjectURL(blob)` → `<a download>`（`buildExcel`） | `blob:` 走 `<a download>` 導航，不受 default-src 管 |
 | 圖片／字型／iframe／object | 無 `<img>`、無外部字型、無 iframe | `img-src 'self' data:`、`object-src 'none'` 純收緊 |
 | `eval`／`new Function`／`javascript:` URL／`document.write` | **0 處** | 不需 `'unsafe-eval'` |
-| `innerHTML` 拼字串 | **18 處**；**格式器層已 `esc()`＋管線消毒（2026-09-06）**：前端 `esc()`（`index.html:398`，逃 `&<>"'`）套在 `COL_NAME`（`:448`）、`.sectlink`／`.subsectlink` 格式器（`:595`、`:623`）、類股／次產業明細標題（`:621`、`:636`、`:678`）與 `updateDateLabel` 的狀態 `title=`（`:795`）——`r.name`／`r.sector`／`r.sub` 全部經此進 DOM；`data-sector`／`data-sub` 屬性走 `encodeURIComponent`。管線端 `src/sanitize.py` `sanitize_label()` 去 `<>"'`＋控制字元、截 40 字，套在 `build_meta.py` 寫 name／industry、`sectors.py --build-chain` 寫產業／次產業、`budget.py aggregate` 寫 latest name／industry 三處（**`&` 刻意保留**：14 檔 `S&P` ETF 與產業鏈「MR Headset & SG」是真實名稱，實查 `tests/test_sanitize.py` 守現行資料零變動）。`cellText()` 仍以 detached div 的 innerHTML 抽純文字做排序，`esc()` 後 `textContent` 還原為原字串、排序不受影響（Playwright 實測名稱／數值欄升降冪皆正確） | 信任邊界原為「repo 內容」，但股名／產業名實際來自 FinMind（`build_meta.py:93`），`'unsafe-inline'` 之下 CSP 擋不住這條路，故補前端逃逸＋管線消毒兩道；Playwright 以 `<img onerror>` 股名／產業名注入 8 tab 實測 `window.__xss` 未觸發、畫面顯示字面文字 |
+| `innerHTML` 拼字串 | **18 處**；**格式器層已 `esc()`＋管線消毒（2026-09-06）**：前端 `esc()`（`index.html:412`，逃 `&<>"'`）套在 `COL_NAME`（`:462`）、`.sectlink`／`.subsectlink` 格式器（`:651`、`:688`）、類股／次產業明細標題（`:686`、`:702`、`:745`）與 `updateDateLabel` 的狀態 `title=`（`:862`）——`r.name`／`r.sector`／`r.sub` 全部經此進 DOM；`data-sector`／`data-sub` 屬性走 `encodeURIComponent`。管線端 `src/sanitize.py` `sanitize_label()` 去 `<>"'`＋控制字元、截 40 字，套在 `build_meta.py` 寫 name／industry、`sectors.py --build-chain` 寫產業／次產業、`budget.py aggregate` 寫 latest name／industry 三處（**`&` 刻意保留**：14 檔 `S&P` ETF 與產業鏈「MR Headset & SG」是真實名稱，實查 `tests/test_sanitize.py` 守現行資料零變動）。`cellText()` 仍以 detached div 的 innerHTML 抽純文字做排序，`esc()` 後 `textContent` 還原為原字串、排序不受影響（Playwright 實測名稱／數值欄升降冪皆正確） | 信任邊界原為「repo 內容」，但股名／產業名實際來自 FinMind（`build_meta.py:93`），`'unsafe-inline'` 之下 CSP 擋不住這條路，故補前端逃逸＋管線消毒兩道；Playwright 以 `<img onerror>` 股名／產業名注入 8 tab 實測 `window.__xss` 未觸發、畫面顯示字面文字 |
 | localStorage 內容 | `tf_gh_token`（只送 Authorization header）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
 
 `base-uri 'none'`：頁面無 `<base>`，也不會需要。**新增資料源／CDN 時要同步改 `connect-src`／`script-src`**，
@@ -312,7 +312,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「資料日/區間｜本站更新 ts｜狀態：<狀態詞>｜資料源徽章」同一行（後兩段 `.dmeta` 小灰；2026-09-06 補「本站更新」與「狀態」段）。
 - 收合卡字體縮小（`.csum/.csum .v` 11px、collapsed `.ttl` 12px、padding 3px、line-height 1.2）→ 收合高度 ~23px。
 - ETF 概況（整體/股票/債券三卡）可收合：`state.etfStatsOpen`（存 tf_cards.etf），`renderEtf` 加 `#etfStatTgl`，bindSegs 綁定；收合後表格 scrollbox 自動長高。
-- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（`index.html:754`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
+- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（`index.html:825`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
   `status.json` 讀不到→「查詢失敗（未知）」(灰，不代表資料異常)、`missing`→「資料缺漏」(紅)、`waiting`→「等待資料發布」(黃)、
   `no_data` 或台北週六／日→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
   `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」＝台北平日 20:00
