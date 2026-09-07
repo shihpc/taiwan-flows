@@ -1002,11 +1002,18 @@ function fitScrollbox(){
 // 所以 hash 的寫回不能直接接在函式尾巴：實際內容改叫 renderMain()，render() 是「畫完就把
 // 網址同步成當前狀態」的薄包裝。全站既有的 render() 呼叫點（含 .then(render)）語意不變。
 function render(){ renderMain(); syncHash(); }
-function renderMain(){
-  for(const k in TABLES) delete TABLES[k];  // 清掉上一輪表格註冊
+// 外框＝分頁列／模式列的 active 狀態＋資料日列（資料日｜本站更新｜狀態｜資料源徽章）。
+// 抽出來是因為 applyHash 在 runCustomRange 提早退出時不呼叫 render()（否則會蓋掉
+// 「區間內無交易日資料」那行訊息），但首載走 hash 時外框從沒畫過，會整片空白——
+// 看不出資料日與狀態，正是本專案要消滅的那類「看起來沒事」。故早退時只補外框、不動 #main。
+function renderChrome(){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===state.tab));
   document.querySelectorAll(".mode").forEach(m=>m.classList.toggle("active",m.dataset.mode===state.mode));
   updateDateLabel();
+}
+function renderMain(){
+  for(const k in TABLES) delete TABLES[k];  // 清掉上一輪表格註冊
+  renderChrome();
   if(state.tab==="foreignflows"){
     updateFutbar();   // 比照其他 tab 呈現台指期外資未平倉卡
     document.getElementById("main").innerHTML=renderForeignFlows();
@@ -1189,6 +1196,7 @@ async function applyHash(){
   }catch(e){ console.warn("hash 套用失敗，退回預設",e); }
   finally{ hashBusy--; }
   if(ok!==false) render();
+  else { renderChrome(); updateFutbar(); syncHash(); }  // 早退：只補外框，保留 #main 既有訊息
 }
 // 只有「外部改網址／貼連結／返回鍵」會進來——syncHash 走 replaceState 不觸發本事件
 window.addEventListener("hashchange",()=>{ applyHash(); });

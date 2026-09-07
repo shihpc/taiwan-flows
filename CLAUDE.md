@@ -169,8 +169,8 @@ GitHub Pages
 - **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
 - **hash 路由（2026-09-07，批次三 #15）**：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=`，
   **只放非預設值**（全預設時網址不留 `#`）。`parseHash()`／`currentHash()`／`syncHash()`／
-  `ensureModeData()`／`applyHashSector()`／`applyHash()`（`index.html:1089`／`:1102`／`:1119`／
-  `:1128`／`:1147`／`:1166`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004-1005`）
+  `ensureModeData()`／`applyHashSector()`／`applyHash()`（`index.html:1096`／`:1109`／`:1126`／
+  `:1135`／`:1154`／`:1173`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004`）；外框（分頁／模式 active＋資料日列）抽成 `renderChrome()`（`:1009`），供 `applyHash` 早退時只補外框不動 `#main`
   ——原本的內容改叫 `renderMain()`，因為它有 5 處早退，寫回不能直接接在尾巴。載入時由 `boot()`
   結尾 `if(location.hash) await applyHash(); else render();`（`:339`）套用；外部改網址／貼連結／
   返回鍵走 `hashchange`（`:1194`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
@@ -180,7 +180,7 @@ GitHub Pages
     由 mode 本身決定、刻意不寫（寫了會在資料日推進後與 mode 互相矛盾）；`side`／`rank`／`etype`
     ＝各 tab 的 seg（`etype` 對到 `state.sub.etf.type`）；`inv`＝法人別；`sec`＝展開的類股；
     `sub`＝`chain` 第二層次產業。**只輸出當前 tab 用得到的鍵**。
-  - **白名單規則**（表在 `HASH_SEG`／`:1079`；tab、mode 清單直接從 DOM 取，增刪分頁不會脫節）：
+  - **白名單規則**（表在 `HASH_SEG`／`:1086`；tab、mode 清單直接從 DOM 取，增刪分頁不會脫節）：
     整段 >1600 字元或單值 >512 字元即丟棄；key 須符合 `^[a-z0-9]{1,6}$`；`decodeURIComponent`
     包 try/catch（壞的 `%zz` 只丟該鍵、不炸）；`d1`／`d2` 須 `YYYY-MM-DD`、`d1<=d2` 且與
     `meta.calendar` 有交集（實際夾到交易日與 65 天上限仍由 `runCustomRange` 做，所以 hash 的
@@ -245,13 +245,13 @@ GitHub Pages
   - chain 僅含產業鏈有分類個股（~1940/2328），**不含 ETF/權證**（與 ETF 頁口徑不同）。
 - **雙格式與回退開關 `SECTOR_SOURCE`（2026-09-07，批次三 #17 瘦身）**：
   - **後端一次產四份**（`src/sectors.py main()`）：**full**＝`sector_latest.json`(566KB)／`sector_ranges.json`(2.5MB)，格式與舊版**完全相同**（含 `stocks`）；**lite**＝`sector_latest_lite.json`(35KB)／`sector_ranges_lite.json`(143KB)，**只有 `classifications`** ＋窗 meta（`dates`／`stocks_n`／`trading_days`／`start`／`end`）。lite 由純函式 `sectors.lite_view(view, dates)`（`src/sectors.py:195`）從**同一個** `build_view` 結果切出、`classifications` 沿用同一物件不重算，因此與 full 逐位相同（`tests/test_sectors_lite.py` 對現行 `data/` 產出實測守門）。
-  - **前端開關**：`const SECTOR_SOURCE="lite"`（`index.html:352`）→ `SECT_LATEST_URL`／`SECT_RANGES_URL`（`:353-354`）決定 `ensureSectorLatest`／`ensureSectorRanges`／`currentSectors` 的 FAILED 短路要看哪支 URL。**回退＝把這個常數改回 `"full"`，其餘一行都不用動**（lite 檔壞掉或缺檔時也是這樣救）。
+  - **前端開關**：`const SECTOR_SOURCE="lite"`（`index.html:354`）→ `SECT_LATEST_URL`／`SECT_RANGES_URL`（`:355-356`）決定 `ensureSectorLatest`／`ensureSectorRanges`／`currentSectors` 的 FAILED 短路要看哪支 URL。**回退＝把這個常數改回 `"full"`，其餘一行都不用動**（lite 檔壞掉或缺檔時也是這樣救）。
     **注意回退的是資料源、不是整包改動**：同批做的 `round(o.net_lots,1)`＋次鍵 tie-break 修正會一併保留，
     因此回退後 chain 次產業「張數」欄有 3 格會與 `2026-09-07 之前的 origin/main` 差 1 張（2026-09-07 驗收實測：
     `chain/r5 IC通路`、`chain/r20 記憶體IC`、`chain/本週 IC封裝測試`）——**新值才是對的**（每列都是 0.1 倍數，
     先 round 再加總才還原真值）。舊版另有「同一個窗、同一格兩個數字」的既有 bug（週一時 `chain/1d` 與
     `chain/本週` 同窗卻顯示 46,107 / 46,106），本批一併修掉。看到這 3 格差 1 不要當成瘦身造成的漂移。
-  - **drill-down 改前端即時聚合**：lite 沒有 `stocks`，點類股時由 `sectorStocks()`／`buildSectorStocks()`（`index.html:591`、`:602`）用該窗的 `dates` 走既有的 `fetchDailyMany`＋`aggregateRange`＋`jPageSectors` 重建同一份逐檔表（就是 `runCustomRange` 那條路徑，口徑由 `tests/parity.py` 守門）；結果快取在 `SECT_STOCKS[mode]`，daily 逐日檔沿用 `state.dailyCache`＋sessionStorage LRU（與自訂區間共用）。`sectorDetail`／`chainSubLevel` 的第一個參數已由 view 改成 **stocks 陣列**。
+  - **drill-down 改前端即時聚合**：lite 沒有 `stocks`，點類股時由 `sectorStocks()`／`buildSectorStocks()`（`index.html:593`、`:604`）用該窗的 `dates` 走既有的 `fetchDailyMany`＋`aggregateRange`＋`jPageSectors` 重建同一份逐檔表（就是 `runCustomRange` 那條路徑，口徑由 `tests/parity.py` 守門）；結果快取在 `SECT_STOCKS[mode]`，daily 逐日檔沿用 `state.dailyCache`＋sessionStorage LRU（與自訂區間共用）。`sectorDetail`／`chainSubLevel` 的第一個參數已由 view 改成 **stocks 陣列**。
   - **`ma20dates` 刻意傳空陣列**：`jPageSectors` 的逐檔列不含 `bias20`，MA20 取樣影響不到任何欄位；傳真的 20 天只會讓 1d/r5 的 drill-down 白抓 20 個 daily 檔。
   - **體感取捨**：彙總表（進 tab 就看得到的那張）變快很多——單日 579KB→36KB、r20 2.57MB→146KB（Playwright 實測傳輸 bytes，未壓縮）；代價是**第一次點某個類股**要下載該窗的 daily 逐日檔（1d 2 檔、r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），期間 `#sectDetail` 顯示「載入成分股 i/n …」，同窗之後的展開都命中快取。
   - **踩到的坑（同批修）**：`chainSubLevel` 的次產業加總原本沒有在加總後 `round(...,1)`，也沒有排序次鍵。逐檔表的走訪順序在兩條路徑不同（full 檔沿用後端 `meta.stocks` 序、lite 即時聚合是 JS 物件鍵序），浮點加總不可交換 → 總和差 1e-9，經 `fmtLot` 的 `Math.round` 放大成**張數差 1**（實測 chain/1d「IC封裝測試」46,106 vs 46,107）。現已加 `round(o.net_lots,1)`＋次鍵 `sub`；`sectorDetail` 與次產業成分股表也補了次鍵 `code`（金額同值時排名才穩定）。這與「改聚合邏輯時四捨五入一律 `jround`、排序一律帶次鍵」是同一條教訓。
