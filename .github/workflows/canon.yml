@@ -1,5 +1,5 @@
 # 由 shihpc/claude-harness 的 tools/sync_canon.py 分發，請勿只改單一 repo。
-# 守門目的：CLAUDE.md 頂端的 CANON 區塊在六個 repo 逐字相同，防止有人只改一份就忘了同步。
+# 守門目的：CLAUDE.md 頂端的 CANON 區塊在家族各 repo 逐字相同，防止有人只改一份就忘了同步。
 # 沿用 taiwan-flows/parity.yml 的既有原則：不吃任何 secret。
 name: canon
 
@@ -22,7 +22,7 @@ jobs:
   canon:
     runs-on: ubuntu-latest
     env:
-      EXPECT: 0f176a1287e722fb347c381ce7668ddced4a8dfd535a5f6efa3f254095bde4ba
+      EXPECT: f54a946c6d8f10fb75b2e0773fe60ed1a48ba058691eb46b269cd733692ba0fb
     steps:
       - uses: actions/checkout@v4
       - name: 驗 CLAUDE.md 的 CANON 區塊未被單獨修改
@@ -42,9 +42,9 @@ jobs:
                   'FAIL: CANON 區塊與正本不一致\n'
                   f'  預期 {exp}\n'
                   f'  實際 {got}\n'
-                  '這段鐵律在六個 repo 逐字相同。正確改法：改 shihpc/claude-harness 的\n'
-                  'CANON.md，跑 python tools/sync_canon.py 同步六份並更新守門 hash，\n'
-                  '六個 repo 一起送出。不要只改這一個 repo。'
+                  '這段鐵律在家族各 repo 逐字相同。正確改法：改 shihpc/claude-harness 的\n'
+                  'CANON.md，跑 python tools/sync_canon.py 同步全部副本並更新守門 hash，\n'
+                  '所有受管 repo（名單見該腳本的 TARGET_REPOS）一起送出。不要只改這一個。'
               )
           print(f'OK: CANON v1 一致（{got[:12]}）')
           PY
