@@ -28,7 +28,7 @@
 
 ### 1.2 千張大戶持股週變化（下半）
 - 資料：同源 `../postmkt/data/diag/diag.json`（GitHub Pages 同 origin `shihpc.github.io`），**只在本 tab 首次開啟時載入一次**。讀不到（本機 http.server、404、JSON 壞）→ 該區塊顯示一行中性灰「讀不到大戶資料（postmkt 診斷素材庫）」，上半照常。
-- 欄位：`stocks[code].hd`（`[前週, 本週]`，取末值為本週大戶持股%）、`hdw`（週變化 pp）、`hdd`（集保資料日）、`f5`／`t5`、`n`、`ind`。
+- 欄位：`stocks[code].hd`（`[最新週%, 前一週%]`，取 `hd[0]` 為本週大戶持股%；定義見 postmkt `src/build_diag.py:618`）、`hdw`（週變化 pp）、`hdd`（集保資料日）、`f5`／`t5`、`n`、`ind`。
 - 兩張表：增加最多 20 檔、減少最多 20 檔；欄＝代號＋股名（代號連 Yahoo，沿用 `yahoo()`）｜產業｜大戶持股%｜週變化 pp（兩位小數）｜外資 5 日張｜投信 5 日張。
 - 可選篩選：產業下拉（取 diag 內出現的 `ind`，預設「全部」）。
 - 標頭徽章：集保資料日（取全體 `hdd` 的 max）、法人資料日（`diag.date`）、涵蓋檔數（有 `hdw` 的檔數）。**必寫**「涵蓋 postmkt 診斷素材庫 N 檔，非全市場」。
