@@ -86,7 +86,7 @@ def _recover_missing(d: str, st: dict, no_fix: bool) -> int:
         logger.error(f"重跑 pipeline 失敗：{e}")
         produced = False
     if not produced:
-        logger.error(f"{d} 重跑後仍無資料：FinMind 未發布或當日確為假日（repo 無假日行事曆）")
+        logger.error(f"{d} 重跑後仍無資料：FinMind 未發布，或當日為假日但行事曆讀不到／未涵蓋（fail-open）")
         run_daily.write_status(d, "missing", "預期交易日缺料（verify 重跑 pipeline 仍無資料）",
                                healthcheck={"date": d, "severity": "critical",
                                             "note": "預期交易日缺料，verify 重跑 pipeline 仍無資料"},
@@ -131,16 +131,31 @@ def main(argv: list[str] | None = None) -> None:
     if not args.date:
         status = st.get("status")
         if status == "no_data":
-            logger.info(f"{d} 為非交易日（週末），無需驗證")
+            logger.info(f"{d} 為非交易日（週末或國定假日），無需驗證")
             sys.exit(EXIT_OK)
-        if status in ("waiting", "error"):
+        if status in ("waiting", "error", "missing"):
             # 排程寫 waiting 時還沒過截止、error 則可能是週末誤跑；到了 verify 這個時間點
-            # 重新分類（平日通常已過截止 → missing 走補回；週末 → no_data 不驗）
+            # 重新分類（平日通常已過截止 → missing 走補回；週末／國定假日 → no_data 不驗）。
+            # missing 也要重新分類（2026-09-28）：daily 班當下行事曆可能讀不到（fail-open 判成
+            # missing），或 status 是行事曆上線前寫的——此時若已知是國定假日，**不得**重跑
+            # pipeline 去補一個不存在的交易日、不得判 critical。已在 meta.calendar 的日子
+            # classify_no_data 不會判 no_data，真交易日缺料照舊走補回。
             now = run_daily.datetime.now(run_daily.TPE)
-            status = run_daily.classify_no_data(d, now, run_daily.load_calendar())
+            hol = run_daily.twse_holidays.load()   # fail-open：讀不到＝只排週末，不拋例外
+            prev_status = status
+            status = run_daily.classify_no_data(d, now, run_daily.load_calendar(), hol)
             if status == "no_data":
-                logger.info(f"{d} 為非交易日（週末），無需驗證")
+                is_hol = run_daily.twse_holidays.is_holiday(d, hol)
+                logger.info(f"{d} 為非交易日（{'國定假日' if is_hol else '週末'}），無需驗證")
+                if prev_status != "no_data" and is_hol:
+                    # 把當日排程寫的 missing／waiting 改正為 no_data，前端才不會停在「資料缺漏」
+                    nm = hol.name(d)
+                    run_daily.write_status(d, "no_data",
+                                           f"非交易日（國定假日{'：' + nm if nm else ''}；verify 依行事曆更正）",
+                                           expected_date=d, attempt=False)
                 sys.exit(EXIT_OK)
+            if status == "waiting" and prev_status == "missing":
+                status = "missing"   # 排程已判過截止缺料，不因時鐘回退改判；只有假日才改道
             if status == "waiting":
                 logger.info(f"{d} 仍在發布截止前，稍後再驗")
                 sys.exit(EXIT_OK)

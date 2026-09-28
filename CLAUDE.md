@@ -94,7 +94,16 @@
     真交易日缺料會被靜默吞掉。現在 `run_daily.classify_no_data(target_day, now_tpe, calendar)`
     三分：週末→`no_data`（exit 0）、平日台北 20:00 發布截止前→`waiting`（exit 0，不重試）、
     平日過截止仍無資料→`missing`（exit 1；`daily.yml` 重試 3 次，用盡後**先 Commit & push 把 `status.json` 推上 main、再由「Fail on missing」步驟讓 job 失敗**觸發 notify-failure——順序不可反，否則前端「資料缺漏」與 verify 補回路徑永遠讀不到 missing）。
-    國定假日 repo 無行事曆來源，會被判 `missing` 誤報一次（刻意接受，見函式 docstring）。
+    **國定假日（2026-09-28 起接家族行事曆）**：`src/twse_holidays.py` 讀 taiwan-flow-live-v2 的
+    `data/twse_holidays.json`（raw main，逾時 10 秒；規格正本 `taiwan-flow-live-v2/docs/holiday-calendar.md`），
+    `classify_no_data(..., holidays)` 對假日回 `no_data`（exit 0、不重試、不開 issue），note 寫「非交易日（國定假日：<名稱>）」；
+    `status.json` 欄位與形狀不變。**fail-open**：行事曆 404／逾時／壞檔／目標年度不在 `years` → 退回只排週末，
+    此時平日國定假日仍會被判 `missing` 誤報一次（同改動前；note 會註明「行事曆未涵蓋此日」）。
+    `meta.calendar` 已成功抓過的日子優先於行事曆（一定是交易日）。颱風臨時停市 TWSE 事後才補，當天仍可能誤報。
+    `target_trading_day()` 刻意**不跳**假日（回的是觸發當晚的日曆日，假日交給 classify 判 no_data；理由見其 docstring）。
+    `verify_daily` 對 `missing`／`waiting`／`error` 都依行事曆重新分類：目標日為假日 → 不重跑 pipeline、不判 critical、
+    exit 0，並把 status 更正為 `no_data`。測試 `tests/test_holidays.py`（假日集合由測試自給、免網路）；
+    `tests/conftest.py` 把預設抓取換成立即失敗，既有測試一律走 fail-open 路徑。
     `verify_daily` 改驗 `status.json.expected_date`（原取 `data/daily/` 末檔名，當天沒產檔時會回頭
     驗昨天並回 ok、把失敗日漂綠），`missing` 時重跑 pipeline 補回、仍失敗 severity=critical、exit 2
     且 `verify.yml` 亮紅；`healthcheck.check()` 加列數健全性（近 20 檔中位數 80%→warn、50%→critical）。
@@ -330,7 +339,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
   `status.json` 讀不到→「查詢失敗（未知）」(灰，不代表資料異常)、`missing`→「資料缺漏」(紅)、`waiting`→「等待資料發布」(黃)、
   `no_data` 或台北週六／日→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
   `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」＝台北平日 20:00
-  （後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近平日；**國定假日不處理**（與後端同，repo 無行事曆），
+  （後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近平日；**前端國定假日不處理**（後端 2026-09-28 已接行事曆，前端屬批次二、未改），
   假日晚間會短暫顯示「等待資料發布」屬已知可接受誤報。反映**最近一次 pipeline 執行結果**，非即時盤態；
   日期欄語意見 `postmkt/docs/date-semantics.md`。
 

@@ -8,7 +8,8 @@
 #
 # pipeline 回 False（無資料）時不再一律標 `no_data`（2026-09-06 修），改由純函式
 #   classify_no_data() 三分：
-#     no_data  週末（非交易日）              → exit 0，daily.yml 不重試
+#     no_data  週末或國定假日（非交易日）    → exit 0，daily.yml 不重試
+#              （國定假日 2026-09-28 起讀家族行事曆 twse_holidays.py；讀不到 fail-open 只排週末）
 #     waiting  平日、台北 20:00 發布截止前     → exit 0，daily.yml 不重試（哨兵/下一班會再來）
 #     missing  平日、已過截止仍無資料（預期交易日缺料）→ exit 1，daily.yml 重試、用盡後亮紅告警
 #   舊行為把三者全寫成 no_data 且 workflow 視同成功，真交易日缺料會被靜默吞掉。
@@ -34,6 +35,7 @@ from pipeline import run_date  # noqa: E402
 import budget  # noqa: E402
 import foreign_flows  # noqa: E402
 import sectors  # noqa: E402
+import twse_holidays  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("run_daily")
@@ -64,6 +66,12 @@ def target_trading_day() -> str:
     故凌晨啟動（hour < 12）時把目標交易日回推一天＝觸發當晚的交易日；21:19 準點或
     小延遲（hour >= 12）則就是當日。與 postmkt `build_summary.py` 的 `slot_trading_day()`
     同一套處理（該處 2026-07-17 已修，本處是同類 bug 的漏網）。
+
+    **刻意不跳過週末／國定假日**（2026-09-28 評估）：這裡回的是「觸發當晚的日曆日」，不是
+    「最近一個交易日」。回推到假日（例：09-29 01:10 啟動 → 09-28 教師節）時，run_date 無資料，
+    交給 classify_no_data 依行事曆判 no_data（exit 0）即可——週末本來就是同一條路。若在這裡
+    往前跳到上一個交易日，會把「假日當晚的這一班」改成重跑上一交易日：冪等無害但會重寫
+    status.date／expected_date 成舊日期，前端與 verify 就看不到「今天休市」這件事，得不償失。
     """
     now = datetime.now(TPE)
     if now.hour < 12:
@@ -72,11 +80,12 @@ def target_trading_day() -> str:
 
 
 def classify_no_data(target_day: str, now_tpe: datetime,
-                     calendar: list[str] | None = None) -> str:
+                     calendar: list[str] | None = None,
+                     holidays: "twse_holidays.TwseHolidays | None" = None) -> str:
     """pipeline 對 target_day 回「無資料」時的三分類（純函式，免 token 免網路）。
 
     回傳值 → status.json.status：
-      "no_data"  週末：非交易日，正常沒資料。
+      "no_data"  週末或國定假日：非交易日，正常沒資料。
       "waiting"  平日、now_tpe 尚未到 target_day 的發布截止（台北 PUBLISH_DEADLINE_HOUR:00）：
                  資料還沒出，等哨兵/備援 cron 下一班再來，不算異常。
       "missing"  平日、已過截止仍無資料：預期交易日缺料，要重試、要告警。
@@ -84,17 +93,21 @@ def classify_no_data(target_day: str, now_tpe: datetime,
     calendar＝meta.calendar（歷來已產出的交易日）：target_day 已在其中代表它「確定是交易日」
     （曾成功抓過），跳過週末推定直接走截止判定；它只含過去、不含未來，所以幫不了假日判斷。
 
-    國定假日：repo 內沒有假日清單，也沒有 TWSE 行事曆來源（meta.calendar 只記「成功抓過的
-    交易日」）。平日的國定假日一過 20:00 會被判成 missing → daily.yml 重試三次後亮紅、
-    notify-failure 開 issue。這是刻意接受的誤報：一年十幾天的假日告警，遠比真交易日缺料
-    被靜默吞掉（本函式要修的原問題）便宜；若日後接上行事曆來源，在這裡加一個判定即可。
+    國定假日（2026-09-28 起）：holidays＝家族共用行事曆（twse_holidays.load() 的結果，規格見
+    taiwan-flow-live-v2 docs/holiday-calendar.md）。target_day 在其 closed 內且該年度有涵蓋
+    → no_data，與週末同類（exit 0、不重試、不告警）。**fail-open**：holidays 為 None（行事曆
+    404／逾時／壞檔）或目標年度不在 years 裡 → 退回只排週末，此時平日國定假日過 20:00 仍會
+    被判 missing（誤報一次，同改動前）——寧可假日誤報，也不可讓行事曆掛掉時把真交易日吞掉。
+    calendar 規則優先於行事曆：已成功抓過的日子一定是交易日，行事曆若誤列也不採信。
+    颱風臨時停市：TWSE 事後才補進行事曆，當天仍可能誤報一次（規格 §2 已知、接受）。
 
     now_tpe 可能已跨到隔日凌晨（Actions 延遲，target_day 是前一天）——截止是以 target_day
     當天 20:00 定義的，隔日凌晨自然算「已過截止」。
     """
     t = datetime.strptime(target_day, "%Y-%m-%d")
     known_trading_day = bool(calendar) and target_day in calendar
-    if not known_trading_day and t.weekday() >= 5:  # 5=週六 6=週日
+    if not known_trading_day and (t.weekday() >= 5  # 5=週六 6=週日
+                                  or twse_holidays.is_holiday(target_day, holidays)):
         return "no_data"
     deadline = t.replace(hour=PUBLISH_DEADLINE_HOUR, minute=0, second=0, microsecond=0,
                          tzinfo=TPE)
@@ -231,17 +244,26 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if not produced:
-        kind = classify_no_data(d, datetime.now(TPE), load_calendar())
+        hol = twse_holidays.load()   # fail-open：讀不到回 None＝只排週末，不拋例外
+        kind = classify_no_data(d, datetime.now(TPE), load_calendar(), hol)
         if kind == "no_data":
-            logger.warning(f"{d} 為週末（非交易日），無產出")
-            write_status(d, "no_data", "非交易日（週末）")
+            if twse_holidays.is_holiday(d, hol) and datetime.strptime(d, "%Y-%m-%d").weekday() < 5:
+                nm = hol.name(d)
+                reason = f"國定假日{'：' + nm if nm else ''}"
+            else:
+                reason = "週末"
+            logger.warning(f"{d} 為{reason}（非交易日），無產出")
+            write_status(d, "no_data", f"非交易日（{reason}）")
             return  # exit 0，daily.yml 不重試
         if kind == "waiting":
             logger.warning(f"{d} 平日、尚未到台北 {PUBLISH_DEADLINE_HOUR:02d}:00 發布截止，資料尚未發布")
             write_status(d, "waiting", f"等待資料發布（台北 {PUBLISH_DEADLINE_HOUR:02d}:00 截止前）")
             return  # exit 0，daily.yml 不重試（哨兵/備援 cron 下一班會再來）
         logger.error(f"{d} 預期交易日已過台北 {PUBLISH_DEADLINE_HOUR:02d}:00 仍無資料 → missing")
-        write_status(d, "missing", "預期交易日缺料（已過發布截止仍無資料；若為國定假日屬誤報）")
+        note = "預期交易日缺料（已過發布截止仍無資料）"
+        if hol is None or not hol.covers(d):
+            note = "預期交易日缺料（已過發布截止仍無資料；國定假日行事曆未涵蓋此日，若為假日屬誤報）"
+        write_status(d, "missing", note)
         sys.exit(1)  # daily.yml 依 status 重試、用盡後亮紅告警
 
     rebuild_products()

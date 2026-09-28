@@ -72,7 +72,8 @@ jobs:
           # Commit & push 推上 main，前端「資料缺漏」與 verify 班 23:40 的補回路徑才讀得到；
           # 改由最後一步「Fail on missing」讓 job 失敗（2026-09-06 驗收發現：exit 在 push 前
           # 會讓 missing 永遠推不上去，線上 status 停在昨天的 ok、verify 讀到昨天而綠）。
-          # missing 若是國定假日屬誤報（repo 無假日行事曆來源，見 classify_no_data 註解），可接受。
+          # 國定假日（2026-09-28 起）由 run_daily 依家族行事曆判 no_data、上面就 break，不會走到這裡；
+          # 只有行事曆讀不到／年度未涵蓋（fail-open，見 classify_no_data 註解）時假日才會誤報 missing。
           if [ "$status" = "error" ]; then
             echo "::error::三次嘗試後仍 error（管線錯誤）"
             exit 1

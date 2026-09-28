@@ -104,7 +104,7 @@ jobs:
           st=$(python -c "import json;print(json.load(open('data/status.json')).get('status','?'))" 2>/dev/null || echo "?")
           if [ "$st" = "missing" ]; then
             echo "::error::預期交易日仍缺料（status=missing）：verify 重跑 pipeline 也無資料。"
-            echo "::error::若當日為國定假日屬誤報（repo 無假日行事曆），否則請查 FinMind 或手動補跑。"
+            echo "::error::若當日為國定假日屬誤報（行事曆讀不到或未涵蓋該年，fail-open），否則請查 FinMind 或手動補跑。"
             exit 1
           fi
           echo "::warning::本次無法完成收盤價驗證（權威源查詢失敗／無 daily 檔）——"
