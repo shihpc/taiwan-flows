@@ -164,6 +164,21 @@
   .rbanner button{margin-left:auto;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);
     border-radius:6px;padding:4px 12px;font-family:inherit;cursor:pointer}
   .loading{color:var(--dim);padding:30px;text-align:center}
+  /* 籌碼雷達 tab（2026-09-28）：grid 子項要 min-width:0，否則表格的 min-content 會把欄撐出視窗、
+     讓頁面水平捲動（表格應在自己的 .tablewrap overflow:auto 裡捲）。表格高度固定，不走 fitScrollbox。 */
+  .radar .twocol>*{min-width:0}
+  .radar .scrollbox{max-height:440px}
+  .radar td.tl,.radar th.tl{text-align:left}
+  .radar .rbadges{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 6px}
+  .radar .rbadges .srcdate{margin-left:0}
+  .radar .rsvg{display:block;width:100%;height:auto;max-width:560px}
+  .radar .rsvg text{font-family:inherit}
+  .radar .rlegend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--dim);margin:4px 0}
+  .radar .rlegend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+  .radar .rnote{color:var(--dim);font-size:11px;line-height:1.6;margin:6px 0}
+  .radar select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;
+    padding:3px 6px;font-family:inherit;font-size:12px;color-scheme:dark;max-width:220px}
+  .radar .rdisc{margin-top:14px;color:var(--dim);font-size:11px;border-top:1px solid var(--line);padding-top:8px}
   .twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   @media(max-width:560px){
     .twocol{grid-template-columns:1fr}
@@ -227,6 +242,7 @@
     <div class="tab" data-tab="foreignflows">外資買賣超</div>
     <div class="tab" data-tab="exch">產業別資金流</div>
     <div class="tab" data-tab="chain">產業鏈資金流</div>
+    <div class="tab" data-tab="radar">籌碼雷達</div>
   </div>
 </header>
 
@@ -263,7 +279,8 @@ const state = { tab:"foreign", mode:"1d", latest:null, ranges:null, meta:null,
   totals:null, totSel:{period:"day",key:null}, totMkt:"tse", futCmp:"prev1", ffOpen:{}, totOpen:true, futOpen:true, etfStatsOpen:true,
   sub:{ foreign:{side:"buy",rank:"amt"}, trust:{side:"buy",rank:"amt"},
         sync:{side:"buy"}, oppose:{side:"fbuy"}, etf:{rank:"mktcap",type:"stock"},
-        exch:{inv:"total",open:null}, chain:{inv:"total",open:null,opensub:null} } };
+        exch:{inv:"total",open:null}, chain:{inv:"total",open:null,opensub:null},
+        radar:{rcls:"exchange",rinv:"total",rind:"all"} } };
 const round = (v,n)=>{const f=10**n;return Math.round(v*f)/f;};
 const fmtDate = x=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
 const parseDate = s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);};
@@ -422,21 +439,24 @@ function tableInner(tid){
   const body=rows.map(r=>"<tr>"+cols.map(c=>`<td class="${c.cls||''}">${c.f(r)}</td>`).join("")+"</tr>").join("");
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
-function table(cols, rows){
-  const tid="t"+(++TID);
-  TABLES[tid]={cols,rows:[...rows],sort:{idx:null,dir:1}};
+// opts（選填，2026-09-28 籌碼雷達加）：sortIdx/sortDir＝初始排序欄與方向（只影響表頭 ▲▼ 標示，
+// rows 需呼叫端自己排好）；tie(a,b)＝點欄位排序時主鍵同值的次鍵。不帶 opts 時行為與原本逐字相同。
+function table(cols, rows, opts){
+  const tid="t"+(++TID), o=opts||{};
+  TABLES[tid]={cols,rows:[...rows],sort:{idx:o.sortIdx??null,dir:o.sortDir||1},tie:o.tie||null};
   return `<div class="tablewrap scrollbox" data-tid="${tid}">${tableInner(tid)}</div>`;
 }
 function sortTable(tid,i){
   const T=TABLES[tid]; if(!T) return;
   if(T.sort.idx===i) T.sort.dir*=-1; else { T.sort.idx=i; T.sort.dir=1; }
   const col=T.cols[i], dir=T.sort.dir, val=r=>sortVal(cellText(col.f(r)));
-  T.rows.sort((a,b)=>{
+  const cmp=(a,b)=>{
     const x=val(a),y=val(b);
     if(x===null) return 1; if(y===null) return -1;
     if(typeof x==="number"&&typeof y==="number") return (x-y)*dir;
     return String(x).localeCompare(String(y),"zh-Hant")*dir;
-  });
+  };
+  T.rows.sort(T.tie?(a,b)=>cmp(a,b)||T.tie(a,b):cmp);
   const wrap=document.querySelector(`[data-tid="${tid}"]`);
   if(wrap) wrap.innerHTML=tableInner(tid);
 }
@@ -623,6 +643,11 @@ async function buildSectorStocks(sv){
   return jPageSectors(agg, state.chainMap||{}).stocks;
 }
 
+// 產業鏈「多對多、非市佔、不含 ETF」說明（產業鏈資金流 tab 與籌碼雷達共用同一句文案）
+function chainNoteHtml(cov, tail){
+  const c=cov||{};
+  return `<div class="muted" style="font-size:11px;margin-bottom:6px">產業鏈為<b>多對多</b>分類（一檔可屬多類）：各類股加總會<b>重疊、非市佔</b>，代表主題曝險；不含 ETF/權證（涵蓋 ${c.stocks_with_chain||"—"}/${c.stocks_total||"—"} 檔）。${tail||""}</div>`;
+}
 function renderSectors(tab){
   const classify = tab==="exch" ? "exchange" : "chain";
   const sv = currentSectors();
@@ -641,8 +666,7 @@ function renderSectors(tab){
     INV_SEG.map(([v,l])=>`<button data-v="${v}" class="${inv===v?"active":""}">${l}</button>`).join("")+
     `</div></div>`;
   if(classify==="chain"){
-    const c=cls.coverage||{};
-    html += `<div class="muted" style="font-size:11px;margin-bottom:6px">產業鏈為<b>多對多</b>分類（一檔可屬多類）：各類股加總會<b>重疊、非市佔</b>，代表主題曝險；不含 ETF/權證（涵蓋 ${c.stocks_with_chain||"—"}/${c.stocks_total||"—"} 檔）。點類股看成分股。</div>`;
+    html += chainNoteHtml(cls.coverage, "點類股看成分股。");
   } else {
     html += `<div class="muted" style="font-size:11px;margin-bottom:6px">交易所產業別（互斥、可加總成大盤）。${INV_LABEL[inv]}買賣超，金額＝買賣超張×收盤估算。點類股看成分股。</div>`;
   }
@@ -743,6 +767,193 @@ function sectorDetail(stocks, classify, inv, sector){
     {h:"漲跌",f:r=>chg(r.chg)},
     {h:"收盤",f:r=>r.close==null?"—":r.close.toLocaleString("en-US")}];
   return `<div class="muted" style="font-size:12px;margin:10px 0 4px"><b>${esc(sector)}</b> · ${INV_LABEL[inv]} · ${rows.length} 檔（再點該類股可收合）</div>`+table(cols, rows);
+}
+
+// ================= 籌碼雷達 tab（2026-09-28，驗收條件正本 docs/radar-tab.md）=================
+// 純描述性顯示（鐵律 8）：象限只是「近 20 日日均 vs 近 5 日日均」的現況分類，不進任何排序／訊號，
+// 顏色是唯一的區分（台股慣例：流入紅系 --up、流出綠系 --down；放緩＝同色降透明度，不新增色票）。
+// 資料：上半讀 sector_*_lite 的 r5/r20 窗（沿用 ensureSectorRanges，與產業別/產業鏈 tab 共用同一份）；
+// 下半讀 postmkt 的持股診斷素材庫 diag.json（同 origin shihpc.github.io，CSP connect-src 'self' 已涵蓋）。
+// 兩者都只在切到本 tab 時 lazy 載入（lazyJson），首屏零新增請求。
+const URL_DIAG="../postmkt/data/diag/diag.json";
+const RADAR_MIN_N=8;
+const RADAR_Q={acc_in:"加速流入",slow_in:"流入放緩",acc_out:"加速流出",slow_out:"流出放緩"};
+const RADAR_QSTYLE={acc_in:["--up",0.9],slow_in:["--up",0.4],acc_out:["--down",0.9],slow_out:["--down",0.4]};
+const radarSq=v=>Math.sign(v)*Math.sqrt(Math.abs(v));
+// 億、一位小數、千分位（不帶單位，給表格與 tooltip）
+const radarYi=v=>(v==null||!isFinite(v))?"—":v.toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1});
+// 象限：x≥0,y≥0 加速流入；x≥0,y<0 流入放緩；x<0,y<0 加速流出；x<0,y≥0 流出放緩（0 歸非負側）
+function radarQuad(x,y){
+  if(x>=0) return y>=0?"acc_in":"slow_in";
+  return y<0?"acc_out":"slow_out";
+}
+// r5／r20：sector_*_lite.json 的 windows.r5 / windows.r20；classify＝exchange|chain；inv＝total|foreign|trust|dealer
+// 回傳 [{sector,n,v20,v5,x,y,q}]（v20/v5＝該窗淨額 億；x＝近 20 日日均 億/日；y＝近 5 日日均 − x）
+// 交易日數取各窗 trading_days（不寫死 5／20；缺值才退回 dates.length）。只取兩窗都有、且 r20 的 n ≥ 8 的類股。
+function radarPoints(r5, r20, classify, inv){
+  const pick=w=>(((w&&w.classifications&&w.classifications[classify])||{}).investors||{})[inv]||[];
+  const td=w=>(w&&w.trading_days)||(w&&w.dates&&w.dates.length)||0;
+  const d5=td(r5), d20=td(r20);
+  if(!d5||!d20) return [];
+  const m5={}; for(const r of pick(r5)) m5[r.sector]=r;
+  const out=[];
+  for(const b of pick(r20)){
+    const a=m5[b.sector];
+    if(!a||!(b.n>=RADAR_MIN_N)) continue;
+    const v20=b.net_amt_k/1e5, v5=a.net_amt_k/1e5;
+    const x=v20/d20, y=v5/d5-x;
+    out.push({sector:b.sector,n:b.n,v20,v5,x,y,q:radarQuad(x,y)});
+  }
+  return out.sort((p,q)=>(q.v20-p.v20)||(p.sector<q.sector?-1:p.sector>q.sector?1:0));
+}
+// diag：postmkt data/diag/diag.json。stocks[code].hd＝[最新週%, 前一週%]（postmkt build_diag.py 的定義，
+// **第 0 個才是本週**）、hdw＝週變化 pp、hdd＝集保資料日。缺 hdw（非有限數）的檔整檔排除。
+// ind＝"all" 或產業名。回傳 {up, down, cover, filtered, hdd, stale, inds}：up＝hdw>0 依 hdw 由大到小前 20，
+// down＝hdw<0 依 hdw 由小到大前 20，同值以代號為次鍵；cover＝全體有 hdw 的檔數（不受篩選影響）。
+function radarHolders(diag, ind){
+  const st=(diag&&diag.stocks)||{}, all=[], inds=new Set();
+  for(const code in st){
+    const s=st[code];
+    if(!s||typeof s.hdw!=="number"||!isFinite(s.hdw)) continue;
+    const hd=Array.isArray(s.hd)&&typeof s.hd[0]==="number"?s.hd[0]:null;
+    const r={code,name:s.n==null?"":String(s.n),ind:s.ind==null?"":String(s.ind),hd,hdw:s.hdw,
+      hdd:typeof s.hdd==="string"?s.hdd:null,f5:typeof s.f5==="number"?s.f5:null,t5:typeof s.t5==="number"?s.t5:null};
+    all.push(r); if(r.ind) inds.add(r.ind);
+  }
+  const hdd=all.reduce((m,r)=>r.hdd&&(!m||r.hdd>m)?r.hdd:m,null);
+  const stale=all.filter(r=>hdd&&r.hdd!==hdd).length;
+  const pool=(ind&&ind!=="all")?all.filter(r=>r.ind===ind):all;
+  const byCode=(a,b)=>a.code<b.code?-1:a.code>b.code?1:0;
+  const up=pool.filter(r=>r.hdw>0).sort((a,b)=>(b.hdw-a.hdw)||byCode(a,b)).slice(0,20);
+  const down=pool.filter(r=>r.hdw<0).sort((a,b)=>(a.hdw-b.hdw)||byCode(a,b)).slice(0,20);
+  return {up,down,cover:all.length,filtered:pool.length,hdd,stale,inds:[...inds].sort((a,b)=>a.localeCompare(b,"zh-Hant"))};
+}
+// 散佈圖：inline SVG、兩軸 signed-sqrt。名稱標籤最多 8 個（依離原點遠近挑），估算外框後貪婪放置、互不重疊。
+function radarSvg(pts){
+  const W=460,H=380,L=40,R=10,T=12,B=34, pw=W-L-R, ph=H-T-B;
+  const mx=Math.max(0.5,...pts.map(p=>Math.abs(radarSq(p.x))))*1.12;
+  const my=Math.max(0.5,...pts.map(p=>Math.abs(radarSq(p.y))))*1.12;
+  const X=v=>L+(radarSq(v)+mx)/(2*mx)*pw, Y=v=>T+(my-radarSq(v))/(2*my)*ph;
+  const f1=v=>v.toFixed(1), x0=X(0), y0=Y(0);
+  const col=q=>`var(${RADAR_QSTYLE[q][0]})`;
+  let g="";
+  // 象限底色（極淡）
+  [[x0,T,W-R-x0,y0-T,"acc_in"],[x0,y0,W-R-x0,H-B-y0,"slow_in"],[L,y0,x0-L,H-B-y0,"acc_out"],[L,T,x0-L,y0-T,"slow_out"]]
+    .forEach(([x,y,w,h,q])=>{ if(w>0&&h>0) g+=`<rect x="${f1(x)}" y="${f1(y)}" width="${f1(w)}" height="${f1(h)}" style="fill:${col(q)}" fill-opacity="0.05"/>`; });
+  // 刻度：候選值在 sqrt 空間間距 ≥ 26px 才畫
+  const TICKS=[1000,500,200,100,50,20,10,5,2,1,0.5];
+  const ticks=(m,scale,px)=>{ const acc=[0]; for(const s of [1,-1]) for(const t of TICKS.slice().reverse()){ const v=s*t;
+      if(Math.abs(radarSq(v))>=m) continue; if(acc.every(a=>Math.abs(scale(a)-scale(v))>=px)) acc.push(v); } return acc; };
+  const fmtT=v=>String(v);
+  for(const v of ticks(mx,X,30)){ const x=f1(X(v));
+    g+=`<line x1="${x}" x2="${x}" y1="${T}" y2="${H-B}" style="stroke:var(--line)"/><text x="${x}" y="${H-B+12}" text-anchor="middle" font-size="10" style="fill:var(--dim)">${fmtT(v)}</text>`; }
+  for(const v of ticks(my,Y,20)){ const y=f1(Y(v));
+    g+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" style="stroke:var(--line)"/><text x="${L-4}" y="${f1(Y(v)+3)}" text-anchor="end" font-size="10" style="fill:var(--dim)">${fmtT(v)}</text>`; }
+  g+=`<line x1="${f1(x0)}" x2="${f1(x0)}" y1="${T}" y2="${H-B}" style="stroke:var(--dim)"/><line x1="${L}" x2="${W-R}" y1="${f1(y0)}" y2="${f1(y0)}" style="stroke:var(--dim)"/>`;
+  g+=`<text x="${f1(L+pw/2)}" y="${H-4}" text-anchor="middle" font-size="10" style="fill:var(--dim)">近20日日均淨額（億／日，√刻度）</text>`;
+  g+=`<text x="${W-R-4}" y="${T+12}" text-anchor="end" font-size="11" style="fill:var(--up)">加速流入</text>`+
+     `<text x="${W-R-4}" y="${H-B-5}" text-anchor="end" font-size="11" style="fill:var(--up)" fill-opacity="0.7">流入放緩</text>`+
+     `<text x="${L+4}" y="${H-B-5}" font-size="11" style="fill:var(--down)">加速流出</text>`+
+     `<text x="${L+4}" y="${T+12}" font-size="11" style="fill:var(--down)" fill-opacity="0.7">流出放緩</text>`;
+  const rad=p=>Math.min(14,3+Math.sqrt(p.n)/2.2);
+  // 點：大的先畫，小的疊在上面才點得到
+  for(const p of pts.slice().sort((a,b)=>b.n-a.n||(a.sector<b.sector?-1:1))){
+    const [c,op]=RADAR_QSTYLE[p.q];
+    g+=`<circle class="rpt" cx="${f1(X(p.x))}" cy="${f1(Y(p.y))}" r="${rad(p).toFixed(1)}" style="fill:var(${c});stroke:var(${c})" fill-opacity="${op}" stroke-opacity="0.9"><title>${esc(p.sector)}｜${RADAR_Q[p.q]}｜近20日 ${radarYi(p.v20)} 億｜近5日 ${radarYi(p.v5)} 億</title></circle>`;
+  }
+  // 標籤：依 sqrt 空間離原點距離挑 8 個；字寬以 11px/字估（CJK 全形），依序試右／左／下／上，
+  // 與已放標籤、圖框、象限角標重疊就放棄該標籤（寧可少標也不重疊）
+  const placed=[[W-R-54,T,W-R,T+14],[W-R-54,H-B-17,W-R,H-B],[L,H-B-17,L+54,H-B],[L,T,L+54,T+14]];
+  const hit=(a,b)=>a[0]<b[2]&&b[0]<a[2]&&a[1]<b[3]&&b[1]<a[3];
+  let nlab=0;
+  for(const p of pts.slice().sort((a,b)=>Math.hypot(radarSq(b.x),radarSq(b.y))-Math.hypot(radarSq(a.x),radarSq(a.y))||(a.sector<b.sector?-1:1))){
+    if(nlab>=8) break;
+    const cx=X(p.x), cy=Y(p.y), r=rad(p), w=[...p.sector].length*11, h=13;
+    // 候選位置：右、左、下、上，再試下／上的左右對齊版（貼圖框邊的點用得到）；box＝[x1,y1,x2,y2]，文字基線＝y2−3
+    const dn=cy+r+1, up=cy-r-1-h;
+    const cands=[[cx+r+2,cy-h/2],[cx-r-2-w,cy-h/2],[cx-w/2,dn],[cx-w/2,up],[cx-w,dn],[cx,dn],[cx-w,up],[cx,up]];
+    for(const [x1,y1] of cands){
+      const box=[x1,y1,x1+w,y1+h];
+      if(box[0]<L||box[2]>W-R||box[1]<T||box[3]>H-B) continue;
+      if(placed.some(b=>hit(b,box))) continue;
+      placed.push(box); nlab++;
+      g+=`<text class="rlab" x="${f1(x1)}" y="${f1(y1+h-3)}" font-size="11" style="fill:var(--fg)">${esc(p.sector)}</text>`;
+      break;
+    }
+  }
+  return `<svg class="rsvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="類股資金四象限散佈圖">${g}</svg>`;
+}
+async function ensureDiag(){
+  if(state.diag!==undefined) return;
+  const j=await lazyJson(URL_DIAG);
+  // 讀不到／HTTP 錯／JSON 壞／形狀不對 → false（該區塊顯示一行灰字，不再重試）
+  state.diag=(j&&j.stocks&&typeof j.stocks==="object"&&!Array.isArray(j.stocks))?j:false;
+}
+function renderRadar(){
+  const R=state.sub.radar, cls=R.rcls, inv=R.rinv;
+  let html=`<div class="radar"><div class="toggles"><div class="seg" data-seg="rcls">`+
+    [["exchange","產業別"],["chain","產業鏈"]].map(([v,l])=>`<button data-v="${v}" class="${cls===v?"active":""}">${l}</button>`).join("")+
+    `</div><div class="seg" data-seg="rinv">`+
+    INV_SEG.map(([v,l])=>`<button data-v="${v}" class="${inv===v?"active":""}">${l}</button>`).join("")+`</div></div>`;
+  // ---- 上半：類股資金四象限 ----
+  html+=`<div class="sub">類股資金四象限（固定比較近 5 日與近 20 日，不隨上方模式）</div>`;
+  const sr=state.sectorRanges, W=sr&&sr.windows;
+  if(!sr && !FAILED[SECT_RANGES_URL]){ ensureSectorRanges().then(render); html+=`<div class="loading">載入類股區間資料…</div>`; }
+  else if(!W||!W.r5||!W.r20) html+=`<div class="loading">讀不到類股區間資料（data/sector_ranges_lite.json）</div>`;
+  else {
+    const pts=radarPoints(W.r5,W.r20,cls,inv);
+    const b=(t,title)=>`<span class="srcdate"${title?` title="${esc(title)}"`:""}>${esc(t)}</span>`;
+    html+=`<div class="rbadges">`+b(`近5日 ${W.r5.start||"—"}~${W.r5.end||"—"}`)+b(`近20日 ${W.r20.start||"—"}~${W.r20.end||"—"}`)+
+      b(`資料日 ${sr.date||"—"}`)+b(`${pts.length} 類股`,`兩窗都有且近 20 日成分股 ≥ ${RADAR_MIN_N} 檔`)+`</div>`;
+    if(cls==="chain") html+=chainNoteHtml(W.r20.classifications&&W.r20.classifications.chain&&W.r20.classifications.chain.coverage);
+    if(!pts.length) html+=`<div class="loading">沒有符合條件的類股</div>`;
+    else {
+      const cols=[
+        {h:"類股",cls:"tl",f:p=>esc(p.sector)},
+        {h:"象限",cls:"tl",f:p=>`<span class="${RADAR_QSTYLE[p.q][0]==="--up"?"up":"down"}">${RADAR_Q[p.q]}</span>`},
+        {h:"近20日 億",f:p=>sign(p.v20,radarYi(p.v20))},
+        {h:"近5日 億",f:p=>sign(p.v5,radarYi(p.v5))}];
+      html+=`<div class="twocol"><div>${radarSvg(pts)}`+
+        `<div class="rlegend">`+Object.keys(RADAR_Q).map(q=>`<span><i style="background:var(${RADAR_QSTYLE[q][0]});opacity:${RADAR_QSTYLE[q][1]}"></i>${RADAR_Q[q]}</span>`).join("")+`</div>`+
+        `<div class="rnote">橫軸＝近 20 日${INV_LABEL[inv]}日均淨額（億／日）；縱軸＝近 5 日日均減近 20 日日均，正值表示最近 5 日比 20 日均更偏買。兩軸為帶正負號的平方根刻度（signed-sqrt，刻度數字仍是原值），讓小類股不擠在原點。點大小依成分股數；滑過點看數值。</div></div>`+
+        `<div>`+table(cols,pts,{sortIdx:2,sortDir:-1,tie:(a,b)=>a.sector<b.sector?-1:a.sector>b.sector?1:0})+`</div></div>`;
+    }
+  }
+  // ---- 下半：千張大戶持股週變化 ----
+  html+=`<div class="sub">千張大戶持股週變化</div>`;
+  if(state.diag===undefined){ ensureDiag().then(render); html+=`<div class="loading">載入大戶資料…</div>`; }
+  else if(state.diag===false) html+=`<div class="muted" style="font-size:12px;margin:4px 0">讀不到大戶資料（postmkt 診斷素材庫）</div>`;
+  else {
+    const inds=radarHolders(state.diag,"all").inds;
+    if(R.rind!=="all"&&!inds.includes(R.rind)) R.rind="all";
+    const H=radarHolders(state.diag,R.rind);
+    const b=t=>`<span class="srcdate">${esc(t)}</span>`;
+    html+=`<div class="rbadges">`+b(`集保資料日 ${H.hdd||"—"}`)+b(`法人資料日 ${state.diag.date||"—"}`)+b(`涵蓋 ${H.cover} 檔`)+`</div>`;
+    html+=`<div class="rnote"><b>涵蓋 postmkt 診斷素材庫 ${H.cover} 檔，非全市場。</b>`+
+      (H.stale?`其中 ${H.stale} 檔的集保資料日早於 ${esc(H.hdd)}。`:"")+
+      `口徑：集保分級「千張以上」大戶持股比的週變化（百分點），週頻；與籌碼K線以成交金額分級推估的「大戶／散戶買賣超」不同。外資／投信 5 日張為診斷素材庫的近 5 日合計。</div>`;
+    html+=`<div class="toggles"><label class="muted" style="font-size:12px">產業 <select id="radarInd"><option value="all">全部</option>`+
+      inds.map(i=>`<option value="${esc(i)}"${i===R.rind?" selected":""}>${esc(i)}</option>`).join("")+
+      `</select></label>`+(R.rind!=="all"?`<span class="muted" style="font-size:11px;align-self:center">篩選後 ${H.filtered} 檔</span>`:"")+`</div>`;
+    const cols=[
+      {h:"代號",cls:"code",f:r=>yahoo(esc(r.code))},
+      {h:"名稱",cls:"name",f:r=>esc(r.name)},
+      {h:"產業",cls:"tl",f:r=>esc(r.ind)},
+      {h:"大戶持股%",f:r=>r.hd==null?"—":r.hd.toFixed(2)},
+      {h:"週變化 pp",f:r=>sign(r.hdw,(r.hdw>0?"+":"")+r.hdw.toFixed(2))},
+      {h:"外資5日張",f:r=>sign(r.f5,fmtLot(r.f5))},
+      {h:"投信5日張",f:r=>sign(r.t5,fmtLot(r.t5))}];
+    const tie=(a,b)=>a.code<b.code?-1:a.code>b.code?1:0;
+    const blk=(ttl,rows,dir)=>`<div><div class="muted" style="font-size:12px;margin:4px 0">${ttl}（${rows.length} 檔）</div>`+
+      (rows.length?table(cols,rows,{sortIdx:4,sortDir:dir,tie}):`<div class="muted" style="font-size:12px">無</div>`)+`</div>`;
+    html+=`<div class="twocol">`+blk("增加最多",H.up,-1)+blk("減少最多",H.down,1)+`</div>`;
+  }
+  html+=`<div class="rdisc">類股象限與大戶變化為現況描述，非買賣訊號；無回測依據。</div></div>`;
+  return html;
+}
+function bindRadar(){
+  const sel=document.getElementById("radarInd");
+  if(sel) sel.onchange=()=>{ state.sub.radar.rind=sel.value; render(); };
 }
 
 // ----- 外資買賣超 tab：市場別 年/月 歷史 + 近期（讀 foreign_history.json，官方 TWSE+TPEx）-----
@@ -994,6 +1205,7 @@ async function updateFutbar(){
 // 響應式表格高度：依視窗可用高度撐滿 scrollbox（多顯示幾筆、超出可下拉）
 function fitScrollbox(){
   document.querySelectorAll("#main .scrollbox").forEach(box=>{
+    if(box.closest(".radar")) return;   // 籌碼雷達的表格高度由 CSS 固定（上下兩段，撐滿視窗會讓下半段只剩 160px）
     const top=box.getBoundingClientRect().top;
     box.style.maxHeight=Math.max(160, Math.floor(window.innerHeight-top-14))+"px";
   });
@@ -1018,6 +1230,11 @@ function renderMain(){
     updateFutbar();   // 比照其他 tab 呈現台指期外資未平倉卡
     document.getElementById("main").innerHTML=renderForeignFlows();
     bindSegs(); bindFfToggles(); fitScrollbox(); return;
+  }
+  if(state.tab==="radar"){   // 固定比較近 5 日 vs 近 20 日，不隨上方模式（自訂區間也不顯示選擇器）
+    updateFutbar();
+    document.getElementById("main").innerHTML=renderRadar();
+    bindSegs(); bindRadar(); fitScrollbox(); return;
   }
   if(state.tab==="exch"||state.tab==="chain"){
     if(state.mode==="custom" && !state.customPages){ updateFutbar(); renderPicker(); return; }
@@ -1055,6 +1272,7 @@ function bindSegs(){
       else if(state.tab==="sync") state.sub.sync.side=v;
       else if(state.tab==="oppose") state.sub.oppose.side=v;
       else if(state.tab==="exch"||state.tab==="chain") state.sub[state.tab].inv=v;
+      else if(state.tab==="radar"){ if(which==="rcls"||which==="rinv") state.sub.radar[which]=v; }
       else state.sub[state.tab][which==="side"?"side":"rank"]=v;
       render();
     });
@@ -1090,7 +1308,9 @@ const HASH_SEG={
   oppose: {side:{ok:["fbuy","fsell"],def:"fbuy"}},
   etf:    {rank:{ok:["mktcap","turnover"],def:"mktcap"}, etype:{ok:["stock","bond"],def:"stock",prop:"type"}},
   exch:   {inv:{ok:["total","foreign","trust","dealer"],def:"total"}},
-  chain:  {inv:{ok:["total","foreign","trust","dealer"],def:"total"}}
+  chain:  {inv:{ok:["total","foreign","trust","dealer"],def:"total"}},
+  // 籌碼雷達：只有這兩個鍵進 hash（產業下拉 rind 刻意不進，見 docs/radar-tab.md）
+  radar:  {rcls:{ok:["exchange","chain"],def:"exchange"}, rinv:{ok:["total","foreign","trust","dealer"],def:"total"}}
 };
 const isYmd=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s);
 function parseHash(){
