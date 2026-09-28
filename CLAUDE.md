@@ -43,7 +43,8 @@
 > 判準細則、派工模板、教訓簿見 `shihpc/claude-harness`（private）。雲端 session 需 add_repo 才讀得到。
 <!-- CANON:END v1 -->
 
-三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值 / 外資買賣超** 六個分頁（另有產業別資金流／產業鏈資金流／籌碼雷達三個類股分頁，全站共 9 個 `data-tab`，見「類股資金流」與「籌碼雷達 tab」節）。
+三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值 / 外資買賣超** 六個分頁。
+（「籌碼雷達」tab 2026-09-28 上線後同日搬到 postmkt（tab id `chipradar`），本站已移除、回到 8 個 `data-tab`；規格正本仍是本 repo `docs/radar-tab.md`。）
 盤後資料 → GitHub Actions 每日抓取與預算 → commit JSON → GitHub Pages 純前端秒載。
 
 - **本機位置**：`C:\Users\施伯承\Desktop\Claude\taiwan-flows`
@@ -177,7 +178,7 @@ GitHub Pages
 
 - **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
 - **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
-- **hash 路由（2026-09-07，批次三 #15）**：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=&rcls=&rinv=`（`rcls`／`rinv` 為 2026-09-28 籌碼雷達新增），
+- **hash 路由（2026-09-07，批次三 #15）**：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=`，
   **只放非預設值**（全預設時網址不留 `#`）。`parseHash()`／`currentHash()`／`syncHash()`／
   `ensureModeData()`／`applyHashSector()`／`applyHash()`（`index.html:1096`／`:1109`／`:1126`／
   `:1135`／`:1154`／`:1173`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004`）；外框（分頁／模式 active＋資料日列）抽成 `renderChrome()`（`:1009`），供 `applyHash` 早退時只補外框不動 `#main`
@@ -185,12 +186,11 @@ GitHub Pages
   結尾 `if(location.hash) await applyHash(); else render();`（`:339`）套用；外部改網址／貼連結／
   返回鍵走 `hashchange`（`:1202`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
   hashchange）**——實測切 tab／改 mode／drill 兩層 `history.length` 皆不變。
-  - **key 語意**：`tab`＝9 個 `data-tab` 值（2026-09-28 加 `radar` 後；原為 8）；`mode`＝10 個 `data-mode` 值；`d1`／`d2`＝**只有
+  - **key 語意**：`tab`＝8 個 `data-tab` 值；`mode`＝10 個 `data-mode` 值；`d1`／`d2`＝**只有
     `mode=custom` 且真的查詢過**才寫（`state.customMeta.kind==="custom"`），本週/上週/上月的起訖
     由 mode 本身決定、刻意不寫（寫了會在資料日推進後與 mode 互相矛盾）；`side`／`rank`／`etype`
     ＝各 tab 的 seg（`etype` 對到 `state.sub.etf.type`）；`inv`＝法人別；`sec`＝展開的類股；
-    `sub`＝`chain` 第二層次產業；`rcls`（`exchange`｜`chain`）／`rinv`（`total`｜`foreign`｜`trust`｜`dealer`）＝籌碼雷達的分類法／法人別，
-    走同一張 `HASH_SEG` 白名單（籌碼雷達的產業下拉**刻意不進 hash**）。**只輸出當前 tab 用得到的鍵**。
+    `sub`＝`chain` 第二層次產業。**只輸出當前 tab 用得到的鍵**。
   - **白名單規則**（表在 `HASH_SEG`／`:1086`；tab、mode 清單直接從 DOM 取，增刪分頁不會脫節）：
     整段 >1600 字元或單值 >512 字元即丟棄；key 須符合 `^[a-z0-9]{1,6}$`；`decodeURIComponent`
     包 try/catch（壞的 `%zz` 只丟該鍵、不炸）；`d1`／`d2` 須 `YYYY-MM-DD`、`d1<=d2` 且與
@@ -255,6 +255,9 @@ GitHub Pages
   - chain **多對多**：一檔掛多節點（平均 1.65、最多 21），各節點加總**會重疊、≠大盤、不可讀成市佔**（主題曝險）。**歸戶時要對「產業」去重**（一檔在同產業底下有多個次產業時，勿因 sub_industry 重複計入該產業——否則半導體會從 ~−795 億膨脹成 ~−2700 億）。
   - chain 僅含產業鏈有分類個股（~1940/2328），**不含 ETF/權證**（與 ETF 頁口徑不同）。
 - **雙格式與回退開關 `SECTOR_SOURCE`（2026-09-07，批次三 #17 瘦身）**：
+  - **跨站消費者（2026-09-28 起）**：postmkt「籌碼雷達」tab 以同源相對路徑 `../taiwan-flows/data/sector_ranges_lite.json`
+    讀 `windows.r5`／`r20` 的 `classifications`（`sector`／`net_amt_k`／`n`）、`trading_days`、`start`／`end` 與頂層 `date`；
+    這些欄位改名、改語意或檔案搬家＝跨站變更。
   - **後端一次產四份**（`src/sectors.py main()`）：**full**＝`sector_latest.json`(566KB)／`sector_ranges.json`(2.5MB)，格式與舊版**完全相同**（含 `stocks`）；**lite**＝`sector_latest_lite.json`(35KB)／`sector_ranges_lite.json`(143KB)，**只有 `classifications`** ＋窗 meta（`dates`／`stocks_n`／`trading_days`／`start`／`end`）。lite 由純函式 `sectors.lite_view(view, dates)`（`src/sectors.py:195`）從**同一個** `build_view` 結果切出、`classifications` 沿用同一物件不重算，因此與 full 逐位相同（`tests/test_sectors_lite.py` 對現行 `data/` 產出實測守門）。
   - **前端開關**：`const SECTOR_SOURCE="lite"`（`index.html:354`）→ `SECT_LATEST_URL`／`SECT_RANGES_URL`（`:355-356`）決定 `ensureSectorLatest`／`ensureSectorRanges`／`currentSectors` 的 FAILED 短路要看哪支 URL。**回退＝把這個常數改回 `"full"`，其餘一行都不用動**（lite 檔壞掉或缺檔時也是這樣救）。
     **注意回退的是資料源、不是整包改動**：同批做的 `round(o.net_lots,1)`＋次鍵 tie-break 修正會一併保留，
@@ -267,32 +270,6 @@ GitHub Pages
   - **體感取捨**：彙總表（進 tab 就看得到的那張）變快很多——單日 579KB→36KB、r20 2.57MB→146KB（Playwright 實測傳輸 bytes，未壓縮）；代價是**第一次點某個類股**要下載該窗的 daily 逐日檔（1d 2 檔、r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），期間 `#sectDetail` 顯示「載入成分股 i/n …」，同窗之後的展開都命中快取。
   - **踩到的坑（同批修）**：`chainSubLevel` 的次產業加總原本沒有在加總後 `round(...,1)`，也沒有排序次鍵。逐檔表的走訪順序在兩條路徑不同（full 檔沿用後端 `meta.stocks` 序、lite 即時聚合是 JS 物件鍵序），浮點加總不可交換 → 總和差 1e-9，經 `fmtLot` 的 `Math.round` 放大成**張數差 1**（實測 chain/1d「IC封裝測試」46,106 vs 46,107）。現已加 `round(o.net_lots,1)`＋次鍵 `sub`；`sectorDetail` 與次產業成分股表也補了次鍵 `code`（金額同值時排名才穩定）。這與「改聚合邏輯時四捨五入一律 `jround`、排序一律帶次鍵」是同一條教訓。
 - **size**（2026-09-07 實測 byte 數）：full 的 `sector_ranges.json` 2,568,707B，lite 146,150B——逐檔 `stocks` 表（×5 窗）佔全檔 **94.3%**（`sector_latest` 為 93.9%），換句話說 lite 只有 full 的 5.7%。**full 目前仍照產照 commit**（雙格式並存、供回退）；若要拿走 git 增量成本，下一步是讓 full 不落 git（`.gitignore`），前端已經不讀它了。
-
-## 籌碼雷達 tab（2026-09-28，驗收條件正本 `docs/radar-tab.md`）
-
-- **定位**：純描述性顯示（鐵律 8），象限分類**不進任何排序或訊號**，顏色是唯一區分；底部免責句必留
-  「類股象限與大戶變化為現況描述，非買賣訊號；無回測依據。」
-- **程式位置**（grep 宣告字串）：`// ================= 籌碼雷達 tab` 起，純函式 `radarQuad`／`radarPoints`／
-  `radarHolders`（`tests/test_radar.mjs` 以 vm 沙箱抽出來測，沿用 `tests/extract_js.mjs` 做法），畫面
-  `radarSvg`／`renderRadar`／`bindRadar`／`ensureDiag`。`renderMain()` 的 radar 分支排在 exch/chain 之前，
-  **不隨上方模式**（固定比近 5 日 vs 近 20 日，自訂區間也不顯示選擇器）。
-- **上半（類股資金四象限）**：讀 `ensureSectorRanges()`（即 `SECT_RANGES_URL`，現行 lite）的 `windows.r5`／`r20`，
-  與產業別/產業鏈 tab 共用同一份 `state.sectorRanges`。`x＝r20.net_amt_k/td20/1e5`（億／日）、
-  `y＝r5.net_amt_k/td5/1e5 − x`，td 取各窗 `trading_days`；只取兩窗都有且 r20 `n≥8`（`RADAR_MIN_N`）。
-  0 歸非負側（x=0 算流入側、y=0 算加速側）。SVG 兩軸 signed-sqrt，標籤最多 8 個、估算外框後貪婪放置互不重疊。
-- **下半（千張大戶持股週變化）＝本 repo 第一個跨 repo 讀檔的前端依賴**：同源相對路徑
-  `../postmkt/data/diag/diag.json`（`URL_DIAG`，GitHub Pages 同 origin `shihpc.github.io`，CSP `connect-src 'self'`
-  已涵蓋、**不改 CSP**），約 745KB，**只在切到本 tab 時 `lazyJson` 載一次**。讀不到／HTTP 錯／JSON 壞／
-  形狀不對 → 該區塊一行灰字「讀不到大戶資料（postmkt 診斷素材庫）」、上半照常、不重試。
-  **postmkt 端未改任何檔**，但它的 `diag.json` 從此多一個前端消費者：`stocks[code]` 的 `hd`／`hdw`／`hdd`／
-  `f5`／`t5`／`n`／`ind` 與頂層 `date` 改名或改語意＝跨站變更。**`hd` 是 `[最新週%, 前一週%]`**
-  （postmkt `src/build_diag.py` grep `o["hd"]`，`hdw＝hd[0]−hd[1]`），大戶持股%取 `hd[0]`——驗收文件初稿寫反了，已更正。
-  涵蓋範圍＝postmkt 診斷素材庫（約 1,200 檔），**非全市場**，畫面必寫。
-- **本機驗證**：http.server 要起在 repo **上一層**（例 `/home/user`），以 `/taiwan-flows/` 開頁，`../postmkt/` 才可達；
-  起在 repo 內即可順便驗降級。
-- **共用框架的兩處小擴充**：`table(cols, rows, opts)` 多一個選填 `opts`（`sortIdx`／`sortDir` 初始排序標示、
-  `tie` 點欄排序的次鍵；不帶時行為不變）；`fitScrollbox()` 跳過 `.radar` 內的表格（高度改由 CSS 固定 440px）。
-  產業鏈「多對多、非市佔、不含 ETF」說明抽成 `chainNoteHtml()`，產業鏈資金流 tab 與本 tab 共用，文案逐字不變。
 
 ## 規格後的演進（規格書未涵蓋、已實作）
 
@@ -309,7 +286,6 @@ src/   finmind.py(API client, token lazy) build_meta.py pipeline.py backfill.py
        backfill_market.py futures.py totals.py budget.py sectors.py foreign_flows.py
        healthcheck.py run_daily.py(每日) verify_daily.py(延後驗證)
 tests/ parity.py(前後端口徑比對) extract_js.mjs(從 index.html 抽 JS 聚合函式)
-       test_radar.mjs(籌碼雷達純函式，`node tests/test_radar.mjs`)
 data/  daily/YYYYMMDD.json(逐檔20欄) futures/ meta.json totals.json
        latest.json latest_ranges.json sector_latest.json sector_ranges.json
        industry_chain.json foreign_history.json status.json baseline_20260430.json

@@ -1,5 +1,7 @@
 # 籌碼雷達 tab — 驗收條件
 
+> **2026-09-28 搬到 postmkt**（tab id `chipradar`，驗收條件 `postmkt/docs/move-radar-social.md`）；本站 `radar` tab 已移除。本文件仍是該 tab 的規格正本，下文的「本 repo」「`index.html`」路徑指的是搬家前的原站實作。
+
 **寫於** 2026-09-28，動手前定稿。**目標專案**：`/home/user/taiwan-flows`，分支 `claude/investment-site-optimization-nac77h`。
 **動機**：重建 CMoney 籌碼K線的兩個核心視圖，只用家族已授權資料。設計示意：https://claude.ai/artifact/ETr466nR5q9ox7eVY1Jsft （第一分頁）。
 **性質**：純描述性顯示（鐵律 8：只需驗算式正確）。象限分類**不進任何排序、訊號或顏色以外的強調**；免責句必留。
