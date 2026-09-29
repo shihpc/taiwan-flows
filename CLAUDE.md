@@ -157,6 +157,7 @@ GitHub Pages
 | `python src/sectors.py` | 類股資金流：讀 daily+meta+chain → `sector_latest.json`/`sector_ranges.json` |
 | `python src/healthcheck.py [--date D] [--fix]` | daily.close vs 權威源逐檔比對；`--fix` 在 critical 時重抓該日 pipeline |
 | `python src/run_daily.py` | 每日排程入口：pipeline + budget + foreign_flows + **sectors** + status.json（daily.yml 用）。**不含健檢**（見上） |
+| `python src/sentiment.py [--date D] [--backfill N] [--dry-run]` | 市場情緒指標 → `data/sentiment.json`（run_daily ok 路徑末尾自動呼叫；手動補跑／單日覆寫用，見「市場情緒指標」節） |
 | `python src/verify_daily.py [--date D] [--no-fix]` | **延後驗證班入口**（verify.yml 用）：健檢 → critical 就重抓 → 重算衍生產出 → 寫 status.json.healthcheck |
 | `python tests/parity.py [--n 1 5 10 20 65]` | 前端(index.html) ↔ 後端(budget/sectors) 聚合口徑逐檔比對（免 token、免網路） |
 
@@ -279,6 +280,50 @@ GitHub Pages
   - **體感取捨**：彙總表（進 tab 就看得到的那張）變快很多——單日 579KB→36KB、r20 2.57MB→146KB（Playwright 實測傳輸 bytes，未壓縮）；代價是**第一次點某個類股**要下載該窗的 daily 逐日檔（1d 2 檔、r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），期間 `#sectDetail` 顯示「載入成分股 i/n …」，同窗之後的展開都命中快取。
   - **踩到的坑（同批修）**：`chainSubLevel` 的次產業加總原本沒有在加總後 `round(...,1)`，也沒有排序次鍵。逐檔表的走訪順序在兩條路徑不同（full 檔沿用後端 `meta.stocks` 序、lite 即時聚合是 JS 物件鍵序），浮點加總不可交換 → 總和差 1e-9，經 `fmtLot` 的 `Math.round` 放大成**張數差 1**（實測 chain/1d「IC封裝測試」46,106 vs 46,107）。現已加 `round(o.net_lots,1)`＋次鍵 `sub`；`sectorDetail` 與次產業成分股表也補了次鍵 `code`（金額同值時排名才穩定）。這與「改聚合邏輯時四捨五入一律 `jround`、排序一律帶次鍵」是同一條教訓。
 - **size**（2026-09-07 實測 byte 數）：full 的 `sector_ranges.json` 2,568,707B，lite 146,150B——逐檔 `stocks` 表（×5 窗）佔全檔 **94.3%**（`sector_latest` 為 93.9%），換句話說 lite 只有 full 的 5.7%。**full 目前仍照產照 commit**（雙格式並存、供回退）；若要拿走 git 增量成本，下一步是讓 full 不落 git（`.gitignore`），前端已經不讀它了。
+
+## 市場情緒指標 `data/sentiment.json`（2026-09-29 新增，後端；前端在 postmkt）
+
+規格正本＝`docs/sentiment-tab.md`（§0 口徑、§1 M1–M3、§2 後端）。**純描述性顯示**（鐵律 8）：只算數、不下判斷、
+不進任何排序或訊號。**本 repo `index.html` 零改動**——畫面在 **postmkt「市場情緒」tab**。
+
+- **跨站消費者**：postmkt 以同源相對路徑 `../taiwan-flows/data/sentiment.json` 讀本檔（CSP `connect-src 'self'` 涵蓋）。
+  **schema／欄位名／語意／路徑改動＝跨站變更**，先改 postmkt 前端。樣本 `tests/fixtures/sentiment_sample.json`
+  （fixture 算出、非線上資料；`tests/test_sentiment.py` 守它與本模組算式一致）可供前端測試對照。
+- **程式**：`src/sentiment.py`。純函式 `vix_close`／`pc_ratios`／`retail_ratio`（＋`mtx_open_interest`）回傳比值與中間值；
+  `compute_day(date, fetch)` 打 4 個 FinMind 請求（`TaiwanOptionVix`、`TaiwanOptionDaily` TXO、`TaiwanFuturesDaily` MTX、
+  `TaiwanFuturesInstitutionalInvestors` MTX）；`update(calendar)` 讀既有檔、補 `meta.calendar` 中 ≥`SENTIMENT_START`
+  （`2026-03-02`，TaiwanOptionVix 歷史起點）的缺漏交易日，**逐日升序、每班最多 `SENTIMENT_MAX_BACKFILL`＝20 天**，
+  `rows` 依日期升序、同日覆寫不重複。
+  - 本班計畫（`plan_dates`）：①最新交易日一律重算（晚到資料由此補上）②最近 `SENTIMENT_REFRESH_DAYS`（3）個交易日
+    有 null 關鍵欄者重算 ③其餘缺漏由最舊補起。首次上線約 7–8 班補完（2026-09-29 `meta.calendar` 實查 ≥03-02 共 136 個交易日；每班約 19 天新補＋最新日）。
+  - 口徑（逐項照 §0，**不要自行改**）：VIX＝當日最後一筆；P/C 未平倉比只取 `trading_session=="position"`；
+    P/C 成交量比＝`position`＋`after_market` 合計；散戶淨部位＝三大法人小台空單合計－多單合計；
+    散戶多空比＝散戶淨部位 ÷ 全市場未平倉（`position` 時段 OI 加總）。比值存**百分比兩位小數**，
+    一律 `budget.jround`（JS `Math.round` half-up，**不可用 Python `round`**）。
+  - **0 筆 vs 請求失敗分開處理**：資料集查詢成功但當日 0 筆 → 該欄 `null`（不整日丟棄）；請求失敗（`fm_get` 回 None／例外）
+    → 該日**不寫入**（仍是「缺」，下一班重試，避免把「沒抓到」寫成 null 而沾黏），繼續下一天；連續
+    `SENTIMENT_MAX_CONSEC_FAIL`（2）天失敗就放棄本班（API 掛掉時不空轉）。已算好的照寫，最後拋 `SentimentFetchError`。
+- **schema**（`schema:1`）：`{schema, generated_at(台北 +08:00), start, rows:[{date, vix, pc_oi, pc_vol, put_oi, call_oi,
+  put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio}], check:{taifex_pc:{date,
+  pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`。
+  `check.taifex_pc` 異常時另帶 `note`（`unreachable：…`＝連不到期交所、或「無共同日期」），此時 `date`／`match` 為 `null`。
+- **⚠ 首跑待定口徑**：小台全市場未平倉含不含週契約（`contract_date` 形如 `202609W5`）尚未定案。兩種都算：主值
+  `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者。`retail_ratio`
+  依主值口徑算。首班跑完後把兩個數字回報使用者擇一，定案＝改 `MTX_OI_MAIN` 常數（`"monthly"`）。
+  runner log 每天有一行 `sentiment <date>: … MTX 全市場 OI 全部契約=… 僅月契約=…` 供比對。
+- **期交所交叉核對**：`https://openapi.taifex.com.tw/v1/PutCallRatio`（逾時 15 秒）**只作核對、不是主資料源**；取與本檔共同最新日
+  比 `pc_oi`／`pc_vol` 兩位小數。GitHub runner 能否連到**未驗證**；連不到只記 `note`，不影響產出。
+- **run_daily 接點（M2）**：只在 **ok 路徑**、`rebuild_products()` 之後呼叫 `run_sentiment()`；任何例外捕捉 →
+  印 `::warning::`、`status.json` 寫 `sentiment_error`（遮罩後、≤300 字；成功時移除此鍵；`write_status` 未傳此參數時
+  沿用舊值，故 verify_daily 只更新健檢時不會洗掉），**exit code 語意不變**。`no_data`／`waiting`／`missing`／`error`
+  路徑一行未動、不呼叫。`gather_sources()` 補 `sources.sentiment`＝有任一關鍵值的最新列日期（檔案未產生時不列）。
+  `daily.yml` 的 commit 步驟本來就是 `git add data/`，不需改。verify.yml 不重算情緒指標。
+- **token 遮罩（M3）**：`finmind.mask_secret()`（token 字面量替換＋`token=` 後綴遮罩兩道）已套在 `fm_get` 的所有
+  warning／error 與 `last_err`；`sentiment.py` 與 `run_sentiment()` 的例外訊息／log 也一律經它。
+  `tests/test_sentiment.py` 以假 token 斷言 log、例外、產物、status.json、stdout 皆不含它。
+- 測試：`tests/test_sentiment.py`（§0 的 2026-09-24 實測數字為 fixture：P/C 85.33／121.11 逐位、散戶淨 7,415、VIX 取最後一筆
+  23.12；小台全市場 OI 為**構造值**，因實數尚未取得）；`tests/conftest.py` 的 autouse fixture 讓 sentiment 預設抓取
+  （FinMind／期交所）立即失敗，所有測試離線。
 
 ## 規格後的演進（規格書未涵蓋、已實作）
 

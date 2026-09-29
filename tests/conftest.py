@@ -21,3 +21,18 @@ def _offline_holidays(monkeypatch):
     def _no_network(url, timeout):
         raise RuntimeError("tests are offline")
     monkeypatch.setattr(twse_holidays, "_default_fetch", _no_network)
+
+
+@pytest.fixture(autouse=True)
+def _offline_sentiment(monkeypatch):
+    """市場情緒（2026-09-29）：run_daily ok 路徑會呼叫 sentiment.update()。預設抓取（FinMind／
+    期交所 OpenAPI）一律換成立即失敗，確保測試離線；需要資料的測試自己注入 fetch。"""
+    import sentiment
+
+    def _no_fm(dataset, **params):
+        raise RuntimeError("tests are offline")
+
+    def _no_taifex():
+        raise RuntimeError("tests are offline")
+    monkeypatch.setattr(sentiment, "_default_fetch", _no_fm)
+    monkeypatch.setattr(sentiment, "_default_taifex", _no_taifex)

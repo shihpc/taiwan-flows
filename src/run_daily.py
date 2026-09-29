@@ -20,6 +20,11 @@
 #   TaiwanStockPrice，同一次排程內前後相隔幾秒、拿到的必然是同一份（可能同樣未
 #   settle 的）回應，severity 幾乎恆為 ok，抓不到 2026-06-26 那類事故。
 #   改由 verify.yml（23:40 台北）跑 src/verify_daily.py 做延後獨立驗證。
+#
+# 市場情緒指標（2026-09-29，規格 docs/sentiment-tab.md §2／M2）：既有產出全部完成**之後**
+#   才呼叫 sentiment.update()（run_sentiment()），例外一律捕捉 → status.json 寫
+#   sentiment_error（遮罩後）＋印 ::warning::，**exit code 語意不變**。只在 ok 路徑跑；
+#   no_data／waiting／missing／error 路徑一行未動。
 
 from __future__ import annotations
 
@@ -35,6 +40,8 @@ from pipeline import run_date  # noqa: E402
 import budget  # noqa: E402
 import foreign_flows  # noqa: E402
 import sectors  # noqa: E402
+import sentiment  # noqa: E402
+from finmind import mask_secret  # noqa: E402
 import twse_holidays  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -161,6 +168,14 @@ def gather_sources() -> dict:
             src["foreign"] = fh["latest_date"]
     except Exception:
         pass
+    try:  # 市場情緒指標（sentiment.json）→ 有任一關鍵值的最新列日期；檔案尚未產生時不列
+        p = DATA / "sentiment.json"
+        if p.exists():
+            sd = sentiment.latest_date(json.loads(p.read_text(encoding="utf-8")))
+            if sd:
+                src["sentiment"] = sd
+    except Exception:
+        pass
     return src
 
 
@@ -171,9 +186,12 @@ def read_status() -> dict:
         return {}
 
 
+_KEEP = object()   # write_status 的 sentiment_error 預設：沿用 status.json 既有值
+
+
 def write_status(date: str, status: str, note: str = "", healthcheck: dict | None = None, *,
                  expected_date: str | None = None, success: bool = False,
-                 attempt: bool = True) -> None:
+                 attempt: bool = True, sentiment_error=_KEEP) -> None:
     """寫 status.json。
 
     既有欄位語意不變：date（本次目標交易日）/ status（ok/no_data/waiting/missing/error）/
@@ -182,6 +200,9 @@ def write_status(date: str, status: str, note: str = "", healthcheck: dict | Non
       actual_date     data/daily/ 最新檔日期＝實際落地的最新交易日；與 expected_date 不同即缺料
       last_attempt_at 最近一次 pipeline 嘗試時間（attempt=False 時沿用舊值，verify 只更新健檢用）
       last_success_at 最近一次成功產出時間：success=True 才更新，失敗時保留舊值
+    2026-09-29 新增：
+      sentiment_error 最近一次市場情緒更新失敗的訊息（已遮罩）；成功時移除此鍵。
+                      未傳（_KEEP）＝沿用舊值——verify_daily 等只更新健檢的呼叫不會把它洗掉。
     """
     prev = read_status()
     now = datetime.now(TPE).isoformat()
@@ -194,6 +215,9 @@ def write_status(date: str, status: str, note: str = "", healthcheck: dict | Non
                "last_success_at": now if success else prev.get("last_success_at")}
     if healthcheck is not None:
         payload["healthcheck"] = healthcheck  # daily 收盤價 vs 權威源（severity: ok/warn/critical）
+    se = prev.get("sentiment_error") if sentiment_error is _KEEP else sentiment_error
+    if se:
+        payload["sentiment_error"] = se
     STATUS_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
@@ -224,6 +248,19 @@ def rebuild_products() -> None:
         sectors.main([])
     except Exception as e:
         logger.warning(f"sectors 失敗（略過）：{e}")
+
+
+def run_sentiment() -> str | None:
+    """更新 data/sentiment.json（M2：失敗不拖垮每日管線）。成功回 None，失敗回遮罩後訊息。"""
+    try:
+        logger.info("更新市場情緒指標 sentiment.json …")
+        sentiment.update(load_calendar(), path=DATA / "sentiment.json")
+        return None
+    except Exception as e:  # noqa: BLE001 — 任何例外都不可影響既有產出與 exit code
+        msg = mask_secret(f"{type(e).__name__}: {e}")[:300]
+        logger.warning(f"市場情緒指標更新失敗（略過，不影響既有產出）：{msg}")
+        print(f"::warning::市場情緒指標更新失敗（不影響既有產出）：{msg}", flush=True)
+        return msg
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -267,13 +304,14 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)  # daily.yml 依 status 重試、用盡後亮紅告警
 
     rebuild_products()
+    sent_err = run_sentiment()   # 既有產出都完成之後才跑；失敗只記錄、不影響 exit code
 
     # 收盤價健檢留給 verify.yml（23:40 台北）的延後獨立驗證；這裡先標 pending，
     # 讓前端知道「今天的資料還沒經過獨立驗證」而不是誤以為已驗過。
     write_status(d, "ok", "", healthcheck={
         "date": d, "severity": "pending",
         "note": "待 verify_daily 延後驗證（同一次排程內比對權威源無意義）",
-    }, success=True)
+    }, success=True, sentiment_error=sent_err)
     logger.info(f"=== {d} 完成 ===")
 
 

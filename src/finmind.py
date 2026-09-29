@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -53,6 +54,23 @@ def get_token() -> str:
     return _TOKEN
 
 
+def mask_secret(msg) -> str:
+    """把字串裡的 FinMind token 遮掉（鐵律 1；2026-09-28 市場情緒 tab M3）。
+
+    token 走 query string，requests 的連線例外訊息會帶完整 URL（`...&token=<值>`），
+    原本 fm_get 的 warning／error 直接印 `{e}` 就會把 token 寫進 Actions log。
+    兩道：①token 字面量替換（token 已載入且長度 ≥ 8 才做，避免空字串 replace 炸開）
+    ②`token=` 後綴一律遮到下一個 `&`／空白為止（token 未載入或被百分比編碼時仍成立；
+    停止字元刻意只有 `&` 與空白——寧可多遮，也不讓含 `'`／`)` 的 token 半遮）。
+    """
+    s = str(msg)
+    tok = _TOKEN or os.environ.get("FINMIND_TOKEN") or ""
+    tok = tok.strip()
+    if len(tok) >= 8:
+        s = s.replace(tok, "***")
+    return re.sub(r"(token=)[^&\s]+", r"\1***", s)
+
+
 def fm_get(dataset: str, retries: int = 3, backoff: float = 10.0, **params) -> Optional[pd.DataFrame]:
     """
     FinMind /data 查詢。
@@ -78,16 +96,16 @@ def fm_get(dataset: str, retries: int = 3, backoff: float = 10.0, **params) -> O
             r.raise_for_status()
             body = r.json()
             if body.get("status") != 200:
-                logger.warning(f"[FinMind] {dataset} status={body.get('status')} msg={body.get('msg','')}")
-                last_err = body.get("msg", "non-200")
+                logger.warning(f"[FinMind] {dataset} status={body.get('status')} msg={mask_secret(body.get('msg',''))}")
+                last_err = mask_secret(body.get("msg", "non-200"))
                 time.sleep(backoff)
                 continue
             data = body.get("data", [])
             time.sleep(API_SLEEP)
             return pd.DataFrame(data) if data else pd.DataFrame()
         except Exception as e:
-            last_err = str(e)
-            logger.warning(f"[FinMind] {dataset} 連線錯誤 (attempt {attempt}): {e}")
+            last_err = mask_secret(e)
+            logger.warning(f"[FinMind] {dataset} 連線錯誤 (attempt {attempt}): {mask_secret(e)}")
             time.sleep(backoff)
     logger.error(f"[FinMind] {dataset} 失敗（{retries} 次重試後）: {last_err}")
     return None
@@ -105,5 +123,5 @@ def check_quota() -> dict:
         d = r.json()
         return {"used": d.get("user_count", -1), "limit": d.get("api_request_limit", -1)}
     except Exception as e:
-        logger.warning(f"[FinMind] 用量查詢失敗: {e}")
+        logger.warning(f"[FinMind] 用量查詢失敗: {mask_secret(e)}")
         return {"used": -1, "limit": -1}
