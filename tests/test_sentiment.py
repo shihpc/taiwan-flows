@@ -271,7 +271,7 @@ def test_update_budget_exhausted_stops_writes_and_does_not_raise(tmp_path, caplo
 
 
 def test_update_budget_default_and_last_day_not_logged(tmp_path, caplog):
-    assert sentiment.SENTIMENT_BUDGET_SEC == 600
+    assert sentiment.SENTIMENT_BUDGET_SEC == 300
     cal = _cal(3)
     with caplog.at_level(logging.WARNING, logger=sentiment.logger.name):
         out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [],
@@ -427,3 +427,13 @@ def test_run_daily_non_ok_paths_do_not_call_sentiment(rd_tmp, monkeypatch):
     run_daily.main(["--date", "2026-09-26"])           # 週六 → no_data、exit 0
     assert called == []
     assert json.loads((tmp / "status.json").read_text(encoding="utf-8"))["status"] == "no_data"
+
+
+def test_run_daily_uses_default_budget():
+    """run_daily 呼叫 update() 時不得自帶 budget_sec（要吃模組預設值，否則預算調整不會生效）。"""
+    import re as _re
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1] / "src" / "run_daily.py").read_text(encoding="utf-8")
+    calls = _re.findall(r"sentiment\.update\((.*?)\)\s*$", src, _re.M)
+    assert calls, "run_daily 找不到 sentiment.update( 呼叫"
+    assert all("budget_sec" not in c for c in calls)

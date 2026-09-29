@@ -48,8 +48,10 @@ SENTIMENT_PATH = DATA / "sentiment.json"
 SENTIMENT_START = "2026-03-02"      # TaiwanOptionVix 歷史最早日（2024-06 查詢 0 筆＝資料集本身從此開始）
 SENTIMENT_MAX_BACKFILL = 20         # 每班最多算幾個交易日（每天 4 個請求，避免單班請求爆量）
 SENTIMENT_MAX_CONSEC_FAIL = 2      # 連續幾天請求失敗就放棄本班（API 整個掛掉時別把 20 天 × 重試全跑完）
-SENTIMENT_BUDGET_SEC = 600          # 每班牆鐘總預算（秒）：daily.yml timeout 55 分、重試迴圈已吃掉大半，
-                                    # 情緒指標不可擠壓既有產出的 commit；超過即停、已算的照寫、剩餘留待下班
+SENTIMENT_BUDGET_SEC = 300          # 每班牆鐘總預算（秒）：daily.yml timeout 55 分、重試迴圈已吃掉大半，
+                                    # 情緒指標不可擠壓既有產出的 commit；達到即停、已算的照寫、剩餘留待下班。
+                                    # 只在天與天之間檢查：最壞單班≈預算＋一天最慢成功（4 資料集×fm_get 3 次×(30+10)s≈440s）
+                                    # ＋期交所核對 15s≈12.6 分；daily.yml 最壞總長≈47.6 分（600 秒時≈52.6 分，逼近 55 分，故降為 300）
 SENTIMENT_REFRESH_DAYS = 3          # 最近 N 個交易日若有 null 欄位，下一班重算（資料晚到）
 MTX_OI_MAIN = "all"                 # 全市場未平倉主值口徑："all"（全部契約）| "monthly"（僅月契約）——首跑比對後定案
 TAIFEX_PC_URL = "https://openapi.taifex.com.tw/v1/PutCallRatio"   # 只作交叉核對，不是主資料源
