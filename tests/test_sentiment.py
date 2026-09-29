@@ -430,10 +430,13 @@ def test_run_daily_non_ok_paths_do_not_call_sentiment(rd_tmp, monkeypatch):
 
 
 def test_run_daily_uses_default_budget():
-    """run_daily 呼叫 update() 時不得自帶 budget_sec（要吃模組預設值，否則預算調整不會生效）。"""
-    import re as _re
+    """run_daily 呼叫 update() 時不得自帶 budget_sec（要吃模組預設值，否則預算調整不會生效）。以 ast 判斷，註解不影響。"""
+    import ast
     from pathlib import Path as _P
-    src = (_P(__file__).resolve().parents[1] / "src" / "run_daily.py").read_text(encoding="utf-8")
-    calls = _re.findall(r"sentiment\.update\((.*?)\)\s*$", src, _re.M)
+    tree = ast.parse((_P(__file__).resolve().parents[1] / "src" / "run_daily.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "update" and isinstance(n.func.value, ast.Name) and n.func.value.id == "sentiment"]
     assert calls, "run_daily 找不到 sentiment.update( 呼叫"
-    assert all("budget_sec" not in c for c in calls)
+    for c in calls:
+        assert all(k.arg is not None for k in c.keywords), "不得以 ** 展開傳參"
+        assert all(k.arg != "budget_sec" for k in c.keywords)

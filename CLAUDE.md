@@ -306,9 +306,10 @@ GitHub Pages
   - **牆鐘總預算 `SENTIMENT_BUDGET_SEC`＝300 秒（5 分）**：`daily.yml` timeout 55 分、重試迴圈已吃掉大半，情緒指標
     不可擠壓既有產出的 commit。每算完一天檢查耗時，超過且還有剩餘天數即停止本班——已算的照寫、**不拋錯、不算失敗**，
     印一行 warning 說明剩餘天數留待下班（下一班由 `plan_dates` 自然補回）。`update()` 的 `clock` 參數可注入供測試。
-    **預算只在天與天之間檢查**，最壞單班≈300＋440（一天最慢成功：4 資料集×`fm_get` 3 次×(30+10) 秒）＋15（期交所）≈12.6 分；
-    `daily.yml` 最壞總長（兩次失敗＋兩次 sleep 600＋第三次成功＋情緒）≈47.6 分＜55 分 timeout。原設 600 秒時≈52.6 分逼近上限，
-    2026-09-30 驗收後降為 300（皆為依程式碼的推估、未實測；`requests` timeout 是單次 read 逾時，極慢串流理論上無上限）。
+    **預算只在天與天之間檢查**，單日最壞≈451 秒（前 3 資料集各 `fm_get` 2 敗 (30+10) 秒＋第 3 次 30 秒內成功≈110 秒，
+    第 4 資料集 3 敗 3×(30+10)＝120 秒），最壞單班≈300＋451＋15（期交所）≈12.8 分；`daily.yml` 最壞總長（兩次失敗＋兩次 sleep 600＋
+    第三次成功＋情緒）≈47.8 分＜55 分 timeout，**不含** checkout／setup-python／pip／push 重試。原設 600 秒時≈52.8 分逼近上限，
+    2026-09-30 驗收後降為 300（皆為依程式碼的推估、未實測；`requests` timeout=30 同時是 connect 與單次 read 逾時，極慢串流理論上無上限）。
 - **schema**（`schema:1`）：`{schema, generated_at(台北 +08:00), start, rows:[{date, vix, pc_oi, pc_vol, put_oi, call_oi,
   put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio}], check:{taifex_pc:{date,
   pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`。
