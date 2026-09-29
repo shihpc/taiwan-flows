@@ -312,6 +312,7 @@ async function boot(){
   // 平白多一個 RTT；彼此無依賴，沒有理由排隊）。latest.json 失敗的語意保留：顯示錯誤並中止 boot；
   // meta.json 失敗維持原行為（boot 拋出）；其餘三支失敗只讓對應功能降級（null）。
   // sector_latest.json（~575KB）已移出首屏改 lazy——只有產業別/產業鏈 tab 要用。
+  const holP = holLoad();   // 休市行事曆：非阻塞、不進下方 Promise.all（失敗 fail-open＝只排週末）
   const jsonOrNull = url => fetch(url,{cache:"no-cache"}).then(r=>r.json()).catch(e=>null);
   const settle = p => p.then(v=>({ok:true,v})).catch(e=>({ok:false,e}));
   const [latestR, metaR, totals, foreignHist, status] = await Promise.all([
@@ -331,12 +332,17 @@ async function boot(){
   state.totals=totals; state.foreignHist=foreignHist; state.status=status;
   { const xd=document.getElementById("xlsxDate"), cal=state.meta.calendar;
     if(xd&&cal&&cal.length){ xd.value=state.latest.date; xd.min=cal[0]; xd.max=cal[cal.length-1]; } }
-  { const el=document.getElementById("status");  // 右上角狀態詞：與頂列「狀態：」同一套語意（siteStatus）
-    const ss=siteStatus(); el.textContent=ss.label; el.className="status"+(ss.cls?" "+ss.cls:""); el.title=ss.title; }
+  renderStatusPill();
   renderTotCard();
   // 有 hash 才走 applyHash（無 hash 時 applyHash 只會把 state 設成與初值相同的預設，
   // 走原路徑可少一輪判斷，也讓「沒帶 hash 的首載」行為與加此功能前完全一致）
   if(location.hash) await applyHash(); else render();
+  // 行事曆載入成功才重繪狀態（右上角 pill＋頂列資料日列）一次；失敗不動畫面＝改動前行為
+  holP.then(ok=>{ if(!ok) return; renderStatusPill(); if(document.getElementById("daterow")) updateDateLabel(); });
+}
+function renderStatusPill(){  // 右上角狀態詞：與頂列「狀態：」同一套語意（siteStatus）
+  const el=document.getElementById("status");
+  const ss=siteStatus(); el.textContent=ss.label; el.className="status"+(ss.cls?" "+ss.cls:""); el.title=ss.title;
 }
 // ---- lazy JSON：同一支檔案被多次 render 同時要求時只發一個請求；失敗記進 FAILED，
 //      讓 currentSectors 的 `.then(render)` 重試路徑不會變成無限迴圈 ----
@@ -813,13 +819,35 @@ function bindFfToggles(){
 // ---- 站台狀態（2026-09-06）：頂列「資料日｜本站更新｜狀態」與右上角 pill 共用同一套語意 ----
 // status.json.status 語意見 src/run_daily.py classify_no_data；日期欄語意見 postmkt/docs/date-semantics.md
 // （latest.json 的 date＝盤後法人主資料交易日、generated_at＝本站產出時刻（台北 +08:00）→「本站更新」）。
-// 「最近應有資料的交易日」＝台北時間：平日且已過 20:00（後端 PUBLISH_DEADLINE_HOUR）為今日，否則往前最近平日；
-// 國定假日不處理（與後端一致——repo 無行事曆來源），假日晚間 ok 會短暫顯示「等待資料發布」，屬已知可接受誤報。
+// 「最近應有資料的交易日」＝台北時間：交易日且已過 20:00（後端 PUBLISH_DEADLINE_HOUR）為今日，否則往前最近交易日；
+// 交易日＝非週末且非家族行事曆休市日（2026-09-29 批次二，見下方 HOL 段）；行事曆讀不到時 fail-open 只排週末
+// ＝改動前行為（假日晚間 ok 會短暫顯示「等待資料發布」）。
+// ---- 家族休市行事曆（規格 taiwan-flow-live-v2/docs/holiday-calendar.md §1／§2／§5b）----
+// 同源相對路徑讀 taiwan-flow-live-v2 的 data/twse_holidays.json（同在 shihpc.github.io origin，CSP connect-src 'self'
+// 已涵蓋、不改 CSP）。**非阻塞**：boot 照舊渲染，載入成功才重繪狀態列一次。**fail-open**：讀不到／非 2xx／壞檔／
+// schema 不是整數 1（true 不收）／years 無合法年度 → HOL 維持 null＝只排週末。某年不在 years＝該年未知、只排週末。
+// 同規則另有 postmkt／taiwan-backtest 前端與 Worker parseHolidayCal 各一份（前端無共用模組），改一處要一起看。
+const HOL_URL="../taiwan-flow-live-v2/data/twse_holidays.json";
+let HOL=null;   // {years:Set<number>, closed:Set<string>, names:{}}；null＝未載入或 fail-open
+function holParse(j){
+  if(!j||typeof j!=="object"||j.schema!==1||!Array.isArray(j.years)||!Array.isArray(j.closed)) return null;
+  const years=new Set(j.years.filter(y=>Number.isInteger(y)&&y>=2000&&y<=2100));
+  if(!years.size) return null;
+  const closed=new Set(j.closed.filter(d=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)));
+  const names=(j.names&&typeof j.names==="object")?j.names:{};
+  return {years,closed,names};
+}
+function holClosed(d){ return !!HOL&&typeof d==="string"&&HOL.years.has(+d.slice(0,4))&&HOL.closed.has(d); }
+function holLoad(){
+  return fetch(HOL_URL,{cache:"no-cache"}).then(r=>r.ok?r.json():null)
+    .then(j=>{ HOL=holParse(j); return !!HOL; }).catch(()=>{ HOL=null; return false; });
+}
+function isTradingDate(dt){ const g=dt.getDay(); return g!==0&&g!==6&&!holClosed(fmtDate(dt)); }
 function taipeiNowStr(){ return new Date().toLocaleString("sv-SE",{timeZone:"Asia/Taipei"}); }  // "YYYY-MM-DD HH:MM:SS"
 function lastDueTradingDay(nowStr){
-  const dt=parseDate(nowStr.slice(0,10)), hour=+nowStr.slice(11,13), dow=dt.getDay();
-  if(dow>=1&&dow<=5&&hour>=20) return fmtDate(dt);
-  do{ dt.setDate(dt.getDate()-1); }while(dt.getDay()===0||dt.getDay()===6);
+  const dt=parseDate(nowStr.slice(0,10)), hour=+nowStr.slice(11,13);
+  if(isTradingDate(dt)&&hour>=20) return fmtDate(dt);
+  let i=0; do{ dt.setDate(dt.getDate()-1); }while(!isTradingDate(dt)&&++i<60);   // 60 天防呆
   return fmtDate(dt);
 }
 function siteStatus(){
@@ -832,7 +860,7 @@ function siteStatus(){
   if(st==="waiting") return {key:"waiting",label:"等待資料發布",cls:"nodata",
     title:"預期交易日 "+exp+" 資料尚未發布（台北 20:00 截止前）"};
   const now=taipeiNowStr(), dow=parseDate(now.slice(0,10)).getDay();
-  if(st==="no_data"||dow===0||dow===6) return {key:"closed",label:"休市定格",cls:"",
+  if(st==="no_data"||dow===0||dow===6||holClosed(now.slice(0,10))) return {key:"closed",label:"休市定格",cls:"",
     title:"非交易日，資料停在最近交易日 "+have};
   if(st==="ok"){
     const due=lastDueTradingDay(now);

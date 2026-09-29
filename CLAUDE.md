@@ -335,13 +335,22 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「資料日/區間｜本站更新 ts｜狀態：<狀態詞>｜資料源徽章」同一行（後兩段 `.dmeta` 小灰；2026-09-06 補「本站更新」與「狀態」段）。
 - 收合卡字體縮小（`.csum/.csum .v` 11px、collapsed `.ttl` 12px、padding 3px、line-height 1.2）→ 收合高度 ~23px。
 - ETF 概況（整體/股票/債券三卡）可收合：`state.etfStatsOpen`（存 tf_cards.etf），`renderEtf` 加 `#etfStatTgl`，bindSegs 綁定；收合後表格 scrollbox 自動長高。
-- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（`index.html:825`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
+- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（grep `function siteStatus`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
   `status.json` 讀不到→「查詢失敗（未知）」(灰，不代表資料異常)、`missing`→「資料缺漏」(紅)、`waiting`→「等待資料發布」(黃)、
-  `no_data` 或台北週六／日→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
-  `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」＝台北平日 20:00
-  （後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近平日；**前端國定假日不處理**（後端 2026-09-28 已接行事曆，前端屬批次二、未改），
-  假日晚間會短暫顯示「等待資料發布」屬已知可接受誤報。反映**最近一次 pipeline 執行結果**，非即時盤態；
-  日期欄語意見 `postmkt/docs/date-semantics.md`。
+  `no_data` 或台北週六／日**或行事曆休市日**→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
+  `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」（`lastDueTradingDay`）＝台北
+  交易日 20:00（後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近交易日（跳過週末與休市日）。
+  **前端國定假日（2026-09-29 家族批次二，規格正本 `taiwan-flow-live-v2/docs/holiday-calendar.md` §5b）**：`boot()` 開頭
+  `holLoad()` 以同源相對路徑 `../taiwan-flow-live-v2/data/twse_holidays.json` **非阻塞**讀取（不進首屏 `Promise.all`；CSP
+  `connect-src 'self'` 已涵蓋、未改），載入成功才重繪右上 pill（`renderStatusPill`）與頂列（`updateDateLabel`）一次。
+  **休市日比照週末**：顯示「休市定格」而非「等待資料發布」。`status.json` 的 `missing`／`waiting` 仍優先於行事曆
+  （後端判的就照顯示，前端不蓋掉）。**fail-open**：讀不到／非 2xx／壞檔／`schema` 不是整數 1（`true` 不收）／`years`
+  無合法年度 → `HOL=null`＝只排週末＝改動前行為（假日晚間短暫「等待資料發布」）；某年不在 `years`＝該年未知。
+  Playwright 以行事曆 404 對跑 origin/main，8 tab 頂列＋pill＋`#main` 逐字相同。颱風臨時停市仍會誤報。
+  刻意不改：本週／上週／上月的週一推算（`getDay()` 用於日曆週分桶，實際交易日由 `meta.calendar` 過濾）。
+  同規則在 postmkt／taiwan-backtest 前端與 Worker `parseHolidayCal` 各一份。測試 `tests/test_holidays_frontend.mjs`
+  （pytest 由 `tests/test_holidays_frontend.py` 代跑；fixture `tests/fixtures/twse_holidays_2026.json` 為 2026-09-29 快照）。
+  反映**最近一次 pipeline 執行結果**，非即時盤態；日期欄語意見 `postmkt/docs/date-semantics.md`。
 
 ### ETF 佔比語意（市值排行 vs 成交金額排行）
 - **市值排行**的佔比＝**持股市值/總市值**。**外資**＝官方持股比（準）；**投信、自營對 ETF 無可靠絕對來源**（投信 t_inv 缺 ETF baseline 種子而失真、自營無來源）→ `mktcap_row` 的 `t_hold_value_k/t_share/d_share` 一律 None（顯「—」），其他＝市值−外資持股市值。
