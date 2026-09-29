@@ -303,6 +303,9 @@ GitHub Pages
   - **0 筆 vs 請求失敗分開處理**：資料集查詢成功但當日 0 筆 → 該欄 `null`（不整日丟棄）；請求失敗（`fm_get` 回 None／例外）
     → 該日**不寫入**（仍是「缺」，下一班重試，避免把「沒抓到」寫成 null 而沾黏），繼續下一天；連續
     `SENTIMENT_MAX_CONSEC_FAIL`（2）天失敗就放棄本班（API 掛掉時不空轉）。已算好的照寫，最後拋 `SentimentFetchError`。
+  - **牆鐘總預算 `SENTIMENT_BUDGET_SEC`＝600 秒（10 分）**：`daily.yml` timeout 55 分、重試迴圈已吃掉大半，情緒指標
+    不可擠壓既有產出的 commit。每算完一天檢查耗時，超過且還有剩餘天數即停止本班——已算的照寫、**不拋錯、不算失敗**，
+    印一行 warning 說明剩餘天數留待下班（下一班由 `plan_dates` 自然補回）。`update()` 的 `clock` 參數可注入供測試。
 - **schema**（`schema:1`）：`{schema, generated_at(台北 +08:00), start, rows:[{date, vix, pc_oi, pc_vol, put_oi, call_oi,
   put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio}], check:{taifex_pc:{date,
   pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`。
@@ -311,6 +314,8 @@ GitHub Pages
   `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者。`retail_ratio`
   依主值口徑算。首班跑完後把兩個數字回報使用者擇一，定案＝改 `MTX_OI_MAIN` 常數（`"monthly"`）。
   runner log 每天有一行 `sentiment <date>: … MTX 全市場 OI 全部契約=… 僅月契約=…` 供比對。
+  **定案改 `MTX_OI_MAIN` 時要同步改 postmkt 前端寫死的「全部契約」說明文字**（`postmkt/index.html` grep `全部契約`），
+  否則畫面會把月契約口徑的數字標成全部契約。
 - **期交所交叉核對**：`https://openapi.taifex.com.tw/v1/PutCallRatio`（逾時 15 秒）**只作核對、不是主資料源**；取與本檔共同最新日
   比 `pc_oi`／`pc_vol` 兩位小數。GitHub runner 能否連到**未驗證**；連不到只記 `note`，不影響產出。
 - **run_daily 接點（M2）**：只在 **ok 路徑**、`rebuild_products()` 之後呼叫 `run_sentiment()`；任何例外捕捉 →
@@ -338,11 +343,12 @@ GitHub Pages
 ```
 src/   finmind.py(API client, token lazy) build_meta.py pipeline.py backfill.py
        backfill_market.py futures.py totals.py budget.py sectors.py foreign_flows.py
-       healthcheck.py run_daily.py(每日) verify_daily.py(延後驗證)
-tests/ parity.py(前後端口徑比對) extract_js.mjs(從 index.html 抽 JS 聚合函式)
+       healthcheck.py run_daily.py(每日) verify_daily.py(延後驗證) sentiment.py(市場情緒指標)
+tests/ parity.py(前後端口徑比對) extract_js.mjs(從 index.html 抽 JS 聚合函式) test_sentiment.py(市場情緒)
 data/  daily/YYYYMMDD.json(逐檔20欄) futures/ meta.json totals.json
        latest.json latest_ranges.json sector_latest.json sector_ranges.json
        industry_chain.json foreign_history.json status.json baseline_20260430.json
+       sentiment.json(市場情緒，postmkt 前端讀)
 index.html  taiwan-flows-spec_V1.md
 .github/workflows/  daily.yml(21:19 台北) verify.yml(23:40 台北) parity.yml(push 時)
                     canon.yml(push 時，守 CLAUDE.md 頂端 CANON 區塊)
@@ -414,7 +420,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 
 ### 各源資料日期徽章（偵測不同步）
 - 因各資料源更新時間不一，每卡/tab 顯示自己的「資料源 · MM-DD」徽章；落後於最新源者轉琥珀色標「(落後)」、tooltip 寫來源名。
-- 後端：`run_daily.py` 的 `gather_sources()` 把四源最新日寫進 `status.json.sources`：`daily`(meta.calendar 末日)、`totals`(totals.json 末日)、`futures`(futures 最新檔)、`foreign`(foreign_history.latest_date)。
+- 後端：`run_daily.py` 的 `gather_sources()` 把五源最新日寫進 `status.json.sources`：`daily`(meta.calendar 末日)、`totals`(totals.json 末日)、`futures`(futures 最新檔)、`foreign`(foreign_history.latest_date)、`sentiment`(sentiment.json 有任一關鍵值的最新列日期；檔案未產生時不列，2026-09-29 新增，見「市場情緒指標」節)。
 - 前端：`srcDate/newestSrc/srcBadge`（讀 `state.status.sources`，缺時後備用已載入 JSON 的日期）。掛在 三大法人卡(totals)、台指期卡(futures)、daterow(daily，foreignflows 不掛)、外資買賣超 tab 說明列(foreign)。
 
 ### Excel 可選基準日 + 各源日期標示

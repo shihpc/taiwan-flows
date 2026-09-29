@@ -243,6 +243,47 @@ def test_update_gives_up_after_consecutive_failures(tmp_path):
     assert len(calls) == sentiment.SENTIMENT_MAX_CONSEC_FAIL
 
 
+def _fake_clock(step):
+    """假牆鐘：每呼叫一次前進 step 秒（update 進場取 t0 一次、每算完一天取一次）。"""
+    t = {"now": -step}
+    def c():
+        t["now"] += step
+        return t["now"]
+    return c
+
+
+def test_update_budget_exhausted_stops_writes_and_does_not_raise(tmp_path, caplog):
+    cal = _cal(10)
+    p = tmp_path / "s.json"
+    calls = []
+    with caplog.at_level(logging.WARNING, logger=sentiment.logger.name):
+        out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p,
+                               budget_sec=600, clock=_fake_clock(250))   # 250/500/750 → 第 3 天後超標
+    days = [d for ds, d in calls if ds == "TaiwanOptionVix"]
+    assert days == cal[:3]                                               # 停止本班，不再發請求
+    assert [r["date"] for r in out["rows"]] == cal[:3]
+    assert json.loads(p.read_text(encoding="utf-8")) == out              # 已算的有寫入
+    assert "剩餘 7 天" in caplog.text and "留待下班" in caplog.text
+    # 下一班（預算充裕）自然補回剩餘天數
+    out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p,
+                           clock=_fake_clock(0))
+    assert [r["date"] for r in out["rows"]] == cal
+
+
+def test_update_budget_default_and_last_day_not_logged(tmp_path, caplog):
+    assert sentiment.SENTIMENT_BUDGET_SEC == 600
+    cal = _cal(3)
+    with caplog.at_level(logging.WARNING, logger=sentiment.logger.name):
+        out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [],
+                               path=tmp_path / "s.json", clock=_fake_clock(10_000))
+    assert [r["date"] for r in out["rows"]] == cal[:1]                   # 預設預算同樣生效
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=sentiment.logger.name):
+        sentiment.update(cal[:1], fetch=fixture_fetch(), taifex_fetch=lambda: [],
+                         path=tmp_path / "t.json", clock=_fake_clock(10_000))
+    assert "留待下班" not in caplog.text                                 # 最後一天算完才超標＝沒有剩餘，不喊停
+
+
 def test_output_schema_exact(tmp_path):
     out = sentiment.update([D], fetch=fixture_fetch(), taifex_fetch=lambda: TAIFEX_ITEMS,
                            path=tmp_path / "s.json")

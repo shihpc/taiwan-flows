@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
@@ -47,6 +48,8 @@ SENTIMENT_PATH = DATA / "sentiment.json"
 SENTIMENT_START = "2026-03-02"      # TaiwanOptionVix 歷史最早日（2024-06 查詢 0 筆＝資料集本身從此開始）
 SENTIMENT_MAX_BACKFILL = 20         # 每班最多算幾個交易日（每天 4 個請求，避免單班請求爆量）
 SENTIMENT_MAX_CONSEC_FAIL = 2      # 連續幾天請求失敗就放棄本班（API 整個掛掉時別把 20 天 × 重試全跑完）
+SENTIMENT_BUDGET_SEC = 600          # 每班牆鐘總預算（秒）：daily.yml timeout 55 分、重試迴圈已吃掉大半，
+                                    # 情緒指標不可擠壓既有產出的 commit；超過即停、已算的照寫、剩餘留待下班
 SENTIMENT_REFRESH_DAYS = 3          # 最近 N 個交易日若有 null 欄位，下一班重算（資料晚到）
 MTX_OI_MAIN = "all"                 # 全市場未平倉主值口徑："all"（全部契約）| "monthly"（僅月契約）——首跑比對後定案
 TAIFEX_PC_URL = "https://openapi.taifex.com.tw/v1/PutCallRatio"   # 只作交叉核對，不是主資料源
@@ -382,13 +385,19 @@ def write(doc: dict, path: Path | None = None) -> None:
 
 def update(calendar: list[str], *, fetch: Callable | None = None, taifex_fetch: Callable | None = None,
            path: Path | None = None, max_days: int = SENTIMENT_MAX_BACKFILL,
-           dates: list[str] | None = None, dry_run: bool = False) -> dict:
+           dates: list[str] | None = None, dry_run: bool = False,
+           budget_sec: float = SENTIMENT_BUDGET_SEC, clock: Callable[[], float] = time.monotonic) -> dict:
     """補齊 data/sentiment.json 並寫回；回傳寫出的 doc。
 
     單日請求失敗 → 該日不寫入（仍是「缺」，下一班重試，不會被寫成 null 而沾黏），繼續下一天；
     連續 SENTIMENT_MAX_CONSEC_FAIL 天失敗即放棄本班（API 掛掉時不空轉）。已算好的照寫，
     最後拋 SentimentFetchError（訊息已遮罩）讓呼叫端記錄。
+
+    牆鐘預算：每算完一天（不論成敗）檢查 clock() 自進入本函式起的耗時，達 budget_sec 且還有
+    剩餘天數即停止本班——已算好的照寫、**不拋錯**（用完預算不算失敗），剩餘天數仍是「缺」，
+    下一班由 plan_dates 自然補回。clock 可注入供測試。
     """
+    t0 = clock()
     doc = load(path)
     todo = sorted(dates) if dates is not None else plan_dates(calendar, doc["rows"], max_days)
     logger.info(f"sentiment 本班計算 {len(todo)} 天：{todo[0] + '~' + todo[-1] if todo else '（無）'}")
@@ -408,6 +417,12 @@ def update(calendar: list[str], *, fetch: Callable | None = None, taifex_fetch: 
             if consec >= SENTIMENT_MAX_CONSEC_FAIL:
                 logger.warning(f"sentiment 連續 {consec} 天失敗，放棄本班其餘 {len(todo) - todo.index(d) - 1} 天")
                 break
+        i = todo.index(d)
+        elapsed = clock() - t0
+        if elapsed >= budget_sec and i < len(todo) - 1:
+            logger.warning(f"sentiment 本班已用 {elapsed:.0f} 秒（預算 {budget_sec:.0f} 秒），停止；"
+                           f"剩餘 {len(todo) - i - 1} 天（{todo[i + 1]}~{todo[-1]}）留待下班")
+            break
     rows = merge_rows(doc["rows"], new)
     out = {"schema": SCHEMA, "generated_at": datetime.now(TPE).isoformat(timespec="seconds"),
            "start": SENTIMENT_START, "rows": rows,

@@ -49,7 +49,7 @@
 - `run_daily.py`：在既有產出完成**之後**呼叫 `sentiment.update()`（M2）；`gather_sources()` 補 `sentiment` 最新日。
 - `daily.yml`：commit 步驟納入 `data/sentiment.json`（照既有 pull --rebase 重試）；**其餘步驟不動**。
 
-## 3. 前端（postmkt）tab `sentiment`「市場情緒」（排在 `social` 之後，第 17 個）
+## 3. 前端（postmkt）tab `sentiment`「市場情緒」（排在 `social` 之後、`dates` 之前（新增的第 17 個 tab，`dates` 仍最後））
 - 常數 `SENT_URL = "../taiwan-flows/data/sentiment.json"`；本機驗證同籌碼雷達：http.server 起在 `/home/user`、以 `/postmkt/` 開頁。
 - 三張卡：VIX、Put/Call（未平倉比為主，成交量比為輔）、小台散戶多空比。每張：
   - 最新值＋**自帶資料日**；與前一筆的差；相對近 60 筆（不足 60 筆以實際筆數並註明）的位置，文字寫「近 N 日第 P 百分位」；60 日均值。
