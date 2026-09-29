@@ -64,7 +64,8 @@ def _default_fetch(url: str, timeout: float) -> bytes:
 
 def parse(doc: object) -> TwseHolidays | None:
     """驗 §1 契約的形狀；任何一處不合就回 None（呼叫端 fail-open）。"""
-    if not isinstance(doc, dict) or doc.get("schema") != 1:
+    # schema 必須恰為整數 1：Python 的 True == 1，要另外排除 bool（與 Worker／看門狗一致）
+    if not isinstance(doc, dict) or doc.get("schema") != 1 or isinstance(doc.get("schema"), bool):
         return None
     years, closed, names = doc.get("years"), doc.get("closed"), doc.get("names") or {}
     if not isinstance(years, list) or not years or \

@@ -68,6 +68,8 @@ def test_load_passes_timeout():
     ("非 JSON", lambda u, t: b"<html>404</html>"),
     ("非 UTF-8", lambda u, t: b"\xff\xfe\x00"),
     ("schema 不對", lambda u, t: json.dumps({**DOC, "schema": 2})),
+    ("schema 為 true", lambda u, t: json.dumps({**DOC, "schema": True})),
+    ("schema 為字串", lambda u, t: json.dumps({**DOC, "schema": "1"})),
     ("years 缺", lambda u, t: json.dumps({k: v for k, v in DOC.items() if k != "years"})),
     ("years 空", lambda u, t: json.dumps({**DOC, "years": []})),
     ("closed 非日期", lambda u, t: json.dumps({**DOC, "closed": ["1150925"]})),
