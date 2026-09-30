@@ -449,7 +449,7 @@ def plan_dates(calendar: list[str], rows: list[dict], max_days: int) -> list[str
     ①**最新交易日**一律重算（同日覆寫；晚到的資料由此補上，期交所核對也需要它）；
     ②最近 SENTIMENT_REFRESH_DAYS 個交易日中有 null 關鍵欄位者重算；
     ③其餘缺漏日由舊到新補，總數不超過 max_days；**cv 缺或 < SENTIMENT_CALC_VER 的既有列視同缺漏**
-      （計算規則改版後的歷史重算，§0b），與真缺漏日一起由舊到新排。
+      （計算規則改版後的歷史重算，§0b）——**真缺漏日優先**、cv 過期列排在其後，兩組各自由舊到新。
     """
     cal = sorted({d for d in calendar if YMD_RE.match(str(d)) and d >= SENTIMENT_START})
     if not cal or max_days <= 0:
@@ -461,7 +461,11 @@ def plan_dates(calendar: list[str], rows: list[dict], max_days: int) -> list[str
         if r is not None and any(r.get(k) is None for k in KEY_FIELDS):
             must.add(d)
     must = sorted(must)[-max_days:]
-    rest = [d for d in cal if (d not in have or row_cv(have[d]) < SENTIMENT_CALC_VER) and d not in must]
+    # 真缺漏日優先、cv 過期列其次（各自由舊到新）：行事曆長期讀不到時 fail-open 列恆為 cv=1，
+    # 若混排會每班重算同一批最舊的 cv=1 列、新缺漏永遠輪不到（2026-09-30 驗收實測卡住）
+    missing = [d for d in cal if d not in have and d not in must]
+    stale = [d for d in cal if d in have and row_cv(have[d]) < SENTIMENT_CALC_VER and d not in must]
+    rest = missing + stale
     picked = set(must) | set(rest[:max(0, max_days - len(must))])
     return sorted(picked)
 

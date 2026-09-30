@@ -634,3 +634,21 @@ def test_update_failopen_rows_get_cv1_then_recomputed(tmp_path):
     assert [sentiment.row_cv(r) for r in out["rows"]] == [1, 1, 1]
     out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p, holidays=HOL)
     assert [sentiment.row_cv(r) for r in out["rows"]] == [2, 2, 2]
+
+
+def test_failopen_long_outage_still_advances_backfill(tmp_path):
+    """行事曆連續多班讀不到：fail-open 列恆為 cv=1，但真缺漏日優先，回補仍逐班推進到補齊。"""
+    cal = _cal(30)
+    p = tmp_path / "s.json"
+    for _ in range(10):
+        out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p,
+                               max_days=5, holidays=None)
+    assert [r["date"] for r in out["rows"]] == cal
+
+
+def test_plan_dates_missing_before_stale():
+    cal = _cal(6)
+    rows = [{"date": d, "cv": 1} for d in cal[:3]]           # 前 3 天 cv 過期、後 3 天真缺漏
+    for r in rows:
+        r.update({k: 1 for k in sentiment.KEY_FIELDS})
+    assert sentiment.plan_dates(cal, rows, 3) == sorted([cal[3], cal[4], cal[5]])
