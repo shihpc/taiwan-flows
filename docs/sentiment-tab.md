@@ -66,7 +66,7 @@ put/call 口數＝59603/69848、47553/63148；②到期日推算單元測試（�
    "rows":[{"date":"2026-09-24","vix":23.12,
             "pc_oi":85.33,"pc_vol":121.11,"put_oi":59603,"call_oi":69848,"put_vol":125974,"call_vol":104015,
             "mtx_oi":null,"mtx_oi_monthly_only":null,"inst_long":3304,"inst_short":10719,
-            "retail_net":7415,"retail_ratio":null}],
+            "retail_net":7415,"retail_ratio":null,"cv":2}],
    "check":{"taifex_pc":{"date":"2026-09-24","pc_oi":85.33,"pc_vol":121.11,"match":true}}}
   ```
   比值存百分比、兩位小數（`budget.jround` 語意）；`rows` 依日期升序、同日覆寫不重複。

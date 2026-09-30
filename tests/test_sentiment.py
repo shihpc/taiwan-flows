@@ -24,6 +24,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import finmind  # noqa: E402
 import run_daily  # noqa: E402
 import sentiment  # noqa: E402
+import twse_holidays  # noqa: E402
+
+HOL = twse_holidays.parse(json.loads(
+    (Path(__file__).resolve().parent / "fixtures" / "twse_holidays_2026.json").read_text(encoding="utf-8")))
+
+
+@pytest.fixture(autouse=True)
+def _calendar_available(monkeypatch):
+    """預設讓 update() 讀到行事曆（fail-open 情境由各測試明確傳 holidays=None）。"""
+    monkeypatch.setattr(sentiment.twse_holidays, "load", lambda *a, **k: HOL)
 
 D = "2026-09-24"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "sentiment_sample.json"
@@ -145,7 +155,7 @@ def test_zero_rows_give_null():
 
 def test_compute_day_matches_spec_row():
     calls = []
-    row = sentiment.compute_day(D, fixture_fetch(calls))
+    row = sentiment.compute_day(D, fixture_fetch(calls), HOL)
     assert list(row) == ROW_KEYS
     assert row == {"date": D, "vix": 23.12, "pc_oi": 85.33, "pc_vol": 121.11,
                    "put_oi": 59603, "call_oi": 69848, "put_vol": 125974, "call_vol": 104015,
@@ -155,13 +165,13 @@ def test_compute_day_matches_spec_row():
 
 
 def test_compute_day_single_dataset_empty_only_nulls_that_field():
-    row = sentiment.compute_day(D, fixture_fetch(empty=("TaiwanOptionVix",)))
+    row = sentiment.compute_day(D, fixture_fetch(empty=("TaiwanOptionVix",)), HOL)
     assert row["vix"] is None and row["pc_oi"] == 85.33 and row["retail_net"] == 7415
 
 
 def test_compute_day_request_failure_raises():
     with pytest.raises(sentiment.SentimentFetchError):
-        sentiment.compute_day(D, fixture_fetch(fail=("TaiwanOptionDaily",)))
+        sentiment.compute_day(D, fixture_fetch(fail=("TaiwanOptionDaily",)), HOL)
 
 
 # ---------- update：升序補洞、上限、同日覆寫 ----------
@@ -208,7 +218,7 @@ def test_update_default_cap_is_20(tmp_path):
 def test_update_middle_gap_filled(tmp_path):
     cal = _cal(10)
     p = tmp_path / "s.json"
-    rows = [dict(sentiment.compute_day(d, fixture_fetch())) for d in cal if d != cal[4]]
+    rows = [dict(sentiment.compute_day(d, fixture_fetch(), HOL)) for d in cal if d != cal[4]]
     p.write_text(json.dumps({"schema": 1, "start": sentiment.SENTIMENT_START, "rows": rows}), encoding="utf-8")
     calls = []
     out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p)
@@ -218,7 +228,7 @@ def test_update_middle_gap_filled(tmp_path):
 
 def test_update_same_day_overwrites(tmp_path):
     p = tmp_path / "s.json"
-    old = dict(sentiment.compute_day(D, fixture_fetch()), vix=1.0, pc_oi=None)
+    old = dict(sentiment.compute_day(D, fixture_fetch(), HOL), vix=1.0, pc_oi=None)
     p.write_text(json.dumps({"schema": 1, "start": sentiment.SENTIMENT_START, "rows": [old]}), encoding="utf-8")
     out = sentiment.update([D], fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p, dates=[D])
     assert len(out["rows"]) == 1
@@ -305,7 +315,7 @@ def test_taifex_unreachable_does_not_block(tmp_path):
 
 def test_taifex_mismatch():
     items = [dict(TAIFEX_ITEMS[0], **{"PutCallOIRatio%": "85.34"})]
-    rows = [sentiment.compute_day(D, fixture_fetch())]
+    rows = [sentiment.compute_day(D, fixture_fetch(), HOL)]
     assert sentiment.taifex_check(rows, lambda: items)["match"] is False
 
 
@@ -314,7 +324,7 @@ def test_sample_fixture_matches_computation():
     doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert list(doc) == ["schema", "generated_at", "start", "rows", "check"]
     row = next(r for r in doc["rows"] if r["date"] == D)
-    assert row == sentiment.compute_day(D, fixture_fetch())
+    assert row == sentiment.compute_day(D, fixture_fetch(), HOL)
 
 
 # ---------- M3：token 遮罩 ----------
@@ -448,10 +458,7 @@ def test_run_daily_uses_default_budget():
 # （每契約壓成 put／call 各一列；成交量不在此驗，填 0）。官方：09-24 59603/69848＝85.33%、
 # 09-29 47553/63148＝75.30%。
 
-import twse_holidays  # noqa: E402
 
-HOL = twse_holidays.parse(json.loads(
-    (Path(__file__).resolve().parent / "fixtures" / "twse_holidays_2026.json").read_text(encoding="utf-8")))
 
 TXO_BY_CONTRACT = {
     "2026-09-24": {"202609F4": (25184, 31654), "202609W5": (9722, 8237), "202610": (17039, 19521),
@@ -557,12 +564,13 @@ def test_update_loads_calendar_once_and_passes_it(tmp_path, monkeypatch):
     assert [r["pc_oi"] for r in out["rows"]] == [85.33, 75.30]
 
 
-def test_update_calendar_fail_open_logs(tmp_path, caplog):
-    # conftest 讓預設行事曆抓取離線失敗 → load() 回 None → 只排週末
+def test_update_calendar_fail_open_logs(tmp_path, caplog, monkeypatch):
+    # 行事曆讀不到 → load() 回 None → 只排週末；該列記 cv=1 待下班重算
+    monkeypatch.setattr(twse_holidays, "load", lambda *a, **k: None)
     with caplog.at_level(logging.INFO):
         out = sentiment.update(["2026-09-29"], fetch=_txo_fetch, taifex_fetch=lambda: [],
                                path=tmp_path / "s.json")
-    assert out["rows"][0]["pc_oi"] == 71.83
+    assert out["rows"][0]["pc_oi"] == 71.83 and out["rows"][0]["cv"] == 1
     assert "休市行事曆未載入" in caplog.text
 
 
@@ -589,17 +597,40 @@ def test_cv_old_rows_recomputed_oldest_first_with_cap_and_budget(tmp_path):
 
     calls = []
     out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p,
-                           max_days=5, holidays=None)
+                           max_days=5, holidays=HOL)
     days = [d for ds, d in calls if ds == "TaiwanOptionVix"]
     assert days == [cal[0], cal[1], cal[2], cal[4], cal[-1]]   # 由舊到新（跳過 cv=2 的 cal[3]）＋最新日
     assert [sentiment.row_cv(r) for r in out["rows"]] == [2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2]
 
     calls.clear()                                         # 預算仍生效：第 2 天後超標即停
     out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p,
-                           max_days=5, holidays=None, budget_sec=600, clock=_fake_clock(300))
+                           max_days=5, holidays=HOL, budget_sec=600, clock=_fake_clock(300))
     assert [d for ds, d in calls if ds == "TaiwanOptionVix"] == [cal[5], cal[6]]
 
     for _ in range(5):
         out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p,
-                               max_days=5, holidays=None)
+                               max_days=5, holidays=HOL)
     assert all(sentiment.row_cv(r) == 2 for r in out["rows"]) and [r["date"] for r in out["rows"]] == cal
+
+
+def test_failopen_row_marked_cv1_for_recompute():
+    """行事曆讀不到時算出的列記 cv=1（下一班重算）；讀得到時記 SENTIMENT_CALC_VER。"""
+    import inspect
+    src = inspect.getsource(sentiment.compute_day)
+    assert "SENTIMENT_CALC_VER if holidays is not None else 1" in src
+    assert sentiment.row_cv({"cv": 1}) < sentiment.SENTIMENT_CALC_VER
+
+
+def test_row_cv_rejects_bool_strictly():
+    assert type(sentiment.row_cv({"cv": True})) is int and sentiment.row_cv({"cv": True}) == 1
+    assert sentiment.row_cv({"cv": 2.0}) == 1
+
+
+def test_update_failopen_rows_get_cv1_then_recomputed(tmp_path):
+    """行事曆讀不到那班寫 cv=1；下一班讀得到時這些列被重算成 cv=2。"""
+    cal = _cal(3)
+    p = tmp_path / "s.json"
+    out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p, holidays=None)
+    assert [sentiment.row_cv(r) for r in out["rows"]] == [1, 1, 1]
+    out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p, holidays=HOL)
+    assert [sentiment.row_cv(r) for r in out["rows"]] == [2, 2, 2]

@@ -340,7 +340,8 @@ def compute_day(d: str, fetch: Callable | None = None, holidays=None) -> dict:
            "mtx_oi": rt["mtx_oi"], "mtx_oi_monthly_only": rt["mtx_oi_monthly_only"],
            "inst_long": rt["inst_long"], "inst_short": rt["inst_short"],
            "retail_net": rt["retail_net"], "retail_ratio": rt["retail_ratio"],
-           "cv": SENTIMENT_CALC_VER}
+           # 行事曆讀不到（fail-open 只排週末）時，休市順延的到期日可能判錯 → 記 cv=1，下一班讀得到行事曆時自動重算
+           "cv": SENTIMENT_CALC_VER if holidays is not None else 1}
     # 首跑比對用（小台全市場口徑未定案）：兩種口徑與 VIX 取樣時點印一行（無 token）
     logger.info(f"sentiment {d}: VIX={v['vix']}@{v['time']}（{v['n']} 筆）｜P/C OI={pc['pc_oi']}% "
                 f"Vol={pc['pc_vol']}%｜MTX 全市場 OI 全部契約={rt['mtx_oi_all']} 僅月契約={rt['mtx_oi_monthly_only']}"
