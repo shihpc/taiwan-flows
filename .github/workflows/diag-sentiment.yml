@@ -1,0 +1,35 @@
+name: diag-sentiment
+
+# 一次性診斷（2026-09-30）：TXO Put/Call 未平倉比與期交所官方值不一致（09-29 本檔 71.83% vs 官方 75.30%）。
+# 只印 log、不 commit 任何東西、不掛 notify-failure；查明口徑後可刪除本檔與 tools/diag_pc_oi.py。
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "逗號分隔 YYYY-MM-DD"
+        required: false
+        default: "2026-09-24,2026-09-29"
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Diagnose P/C OI ratio
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          DATES: ${{ inputs.dates }}
+        run: python tools/diag_pc_oi.py --dates "$DATES"
