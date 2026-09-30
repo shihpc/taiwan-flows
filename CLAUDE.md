@@ -295,11 +295,24 @@ GitHub Pages
   （`2026-03-02`，TaiwanOptionVix 歷史起點）的缺漏交易日，**逐日升序、每班最多 `SENTIMENT_MAX_BACKFILL`＝20 天**，
   `rows` 依日期升序、同日覆寫不重複。
   - 本班計畫（`plan_dates`）：①最新交易日一律重算（晚到資料由此補上）②最近 `SENTIMENT_REFRESH_DAYS`（3）個交易日
-    有 null 關鍵欄者重算 ③其餘缺漏由最舊補起。首次上線約 7–8 班補完（2026-09-29 `meta.calendar` 實查 ≥03-02 共 136 個交易日；每班約 19 天新補＋最新日）。
+    有 null 關鍵欄者重算 ③其餘缺漏由最舊補起——**`cv` 缺或 <`SENTIMENT_CALC_VER`（2）的既有列視同缺漏**，與真缺漏日一起
+    由舊到新排，仍受 20 天上限與 300 秒預算約束（計算規則改版的歷史重算，見下條 §0b）。首次上線約 7–8 班補完（2026-09-29 `meta.calendar` 實查 ≥03-02 共 136 個交易日；每班約 19 天新補＋最新日）。
   - 口徑（逐項照 §0，**不要自行改**）：VIX＝當日最後一筆；P/C 未平倉比只取 `trading_session=="position"`；
     P/C 成交量比＝`position`＋`after_market` 合計；散戶淨部位＝三大法人小台空單合計－多單合計；
     散戶多空比＝散戶淨部位 ÷ 全市場未平倉（`position` 時段 OI 加總）。比值存**百分比兩位小數**，
     一律 `budget.jround`（JS `Math.round` half-up，**不可用 Python `round`**）。
+  - **未平倉排除當日到期契約（2026-09-30，規格 §0b）**：`put_oi`／`call_oi`／`pc_oi` 與 `mtx_oi`／`mtx_oi_monthly_only`／
+    `retail_ratio` 不計「到期日＝資料日」的契約（到期結算後已不存在，官方未平倉不含它；run 36678263476 實證 09-29 扣掉
+    `202609F4` 後與期交所逐口相同＝75.30%，未扣為 71.83%）。**成交量欄與法人多空不變**。到期日由純函式
+    `contract_expiry(contract_date, holidays)` 推算：`YYYYMM`＝第 3 個週三、`YYYYMMWn`＝第 n 個週三、`YYYYMMFn`＝第 n 個週五，
+    非交易日（週末或行事曆休市日）順延到下一個交易日；其他形狀（價差 `202610/202611`、空值）回 None＝**不排除**、計數記 log。
+    `expiring_contracts()` 取當日到期集合，`pc_ratios`／`mtx_open_interest`／`retail_ratio` 以 `exclude` 參數收。
+    行事曆＝`src/twse_holidays.py` 的 `load()`，由 `update()` **每班讀一次**（本班無日子要算時不讀）後傳給 `compute_day(d, fetch, holidays)`
+    （`update(holidays=…)` 可注入）。**fail-open 限制**：讀不到行事曆＝只排週末，此時遇國定假日順延的到期日會算錯
+    （例：09-29 會把 `202609F4` 算成 09-25 到期而**不排除**，`pc_oi` 回到 71.83）；log 有 warning。每天 log 一行
+    `未平倉排除當日到期契約 TXO …｜MTX …｜無法解析不排除 …` 列出被排除的契約與口數。小台無官方值可對帳，比照同規則推定。
+    每列帶 **`cv`**（計算版本，本規則＝`SENTIMENT_CALC_VER`＝2；舊列無此鍵視為 1），前端不讀。
+    `tools/diag_pc_oi.py` 有對應候選 `position,exclude_expiring`（同讀行事曆），供線上 ★ 對帳。
   - **0 筆 vs 請求失敗分開處理**：資料集查詢成功但當日 0 筆 → 該欄 `null`（不整日丟棄）；請求失敗（`fm_get` 回 None／例外）
     → 該日**不寫入**（仍是「缺」，下一班重試，避免把「沒抓到」寫成 null 而沾黏），繼續下一天；連續
     `SENTIMENT_MAX_CONSEC_FAIL`（2）天失敗就放棄本班（API 掛掉時不空轉）。已算好的照寫，最後拋 `SentimentFetchError`。
@@ -311,8 +324,8 @@ GitHub Pages
     第三次成功＋情緒）≈47.8 分＜55 分 timeout，**不含** checkout／setup-python／pip／push 重試。原設 600 秒時≈52.8 分逼近上限，
     2026-09-30 驗收後降為 300（皆為依程式碼的推估、未實測；`requests` timeout=30 同時是 connect 與單次 read 逾時，極慢串流理論上無上限）。
 - **schema**（`schema:1`）：`{schema, generated_at(台北 +08:00), start, rows:[{date, vix, pc_oi, pc_vol, put_oi, call_oi,
-  put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio}], check:{taifex_pc:{date,
-  pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`。
+  put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio, cv}], check:{taifex_pc:{date,
+  pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`（`cv` 為整數、2026-09-30 起附加，舊列可能缺）。
   `check.taifex_pc` 異常時另帶 `note`（`unreachable：…`＝連不到期交所、或「無共同日期」），此時 `date`／`match` 為 `null`。
 - **⚠ 首跑待定口徑**：小台全市場未平倉含不含週契約（`contract_date` 形如 `202609W5`）尚未定案。兩種都算：主值
   `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者。`retail_ratio`

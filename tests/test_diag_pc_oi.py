@@ -104,3 +104,36 @@ def test_exception_masked(monkeypatch):
     assert rc == 1
     assert FAKE_TOKEN not in out
     assert "token=***" in out
+
+
+# ---------- §0b：exclude_expiring 候選（run 36678263476 的 09-29 逐契約數字） ----------
+
+import json  # noqa: E402
+
+import twse_holidays  # noqa: E402
+
+HOL = twse_holidays.parse(json.loads((ROOT / "tests" / "fixtures" / "twse_holidays_2026.json")
+                                     .read_text(encoding="utf-8")))
+C0929 = {"202609F4": (44870, 65523), "202609W5": (18556, 27213), "202610": (17923, 20018),
+         "202610F1": (2771, 5389), "202610F2": (643, 140), "202610W1": (2287, 745),
+         "202611": (1624, 1493), "202612": (2664, 4188), "202703": (752, 3679), "202706": (333, 283)}
+ROWS0929 = [_r(cd, 20000, cp, "position", oi, 0)
+            for cd, (p, c) in C0929.items() for cp, oi in (("put", p), ("call", c))]
+
+
+def test_exclude_expiring_candidate():
+    c = diag.candidates(ROWS0929, D, HOL)
+    assert c["position,exclude_expiring"] == {"put": 47553, "call": 63148, "pc": 75.30, "n": 18}
+    assert c["current(position)"]["pc"] == 71.83
+    assert diag.candidates(ROWS0929, D, None)["position,exclude_expiring"]["pc"] == 71.83   # fail-open
+    assert "position,exclude_expiring" not in diag.candidates(ROWS0929)                     # 不給日期不列
+
+
+def test_report_day_stars_exclude_expiring():
+    items = [{"Date": "20260929", "PutCallVolumeRatio%": "90.39", "PutCallOIRatio%": "75.30"}]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        diag.report_day(D, ROWS0929, items, holidays=HOL)
+    lines = buf.getvalue().splitlines()
+    assert any("exclude_expiring" in ln and "★" in ln for ln in lines)
+    assert any("pc_ratios（現行 cv2" in ln and "pc_oi=75.3" in ln for ln in lines)

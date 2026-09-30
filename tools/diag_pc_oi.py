@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from budget import jround  # noqa: E402
 from finmind import mask_secret  # noqa: E402
 import sentiment  # noqa: E402
+import twse_holidays  # noqa: E402
 
 DEFAULT_DATES = "2026-09-24,2026-09-29"
 YMD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -93,8 +94,12 @@ def dedup_max(rows: Iterable[dict]) -> list[dict]:
     return list(best.values())
 
 
-def candidates(rows: list[dict]) -> dict[str, dict]:
-    """候選口徑 → {put, call, pc, n}。"current" 必須等於 sentiment.pc_ratios 的 pc_oi。"""
+def candidates(rows: list[dict], d: str | None = None, holidays=None) -> dict[str, dict]:
+    """候選口徑 → {put, call, pc, n}。"current(position)" 等於 sentiment.pc_ratios 不帶 exclude（cv1 舊口徑）。
+
+    給 d 時另加 "position,exclude_expiring"：排除到期日＝d 的契約（sentiment.contract_expiry，
+    holidays＝twse_holidays.TwseHolidays 或 None＝只排週末），即 cv2 現行口徑（§0b）。
+    """
     rows = list(rows or [])
     pos = lambda r: _sess(r) == "position"  # noqa: E731
     both = lambda r: _sess(r) in SESSIONS  # noqa: E731
@@ -112,6 +117,10 @@ def candidates(rows: list[dict]) -> dict[str, dict]:
         "position,dedup_max": pc_from(dedup_max(rows), pos),
         "after_market_only": pc_from(rows, lambda r: _sess(r) == "after_market"),
     }
+    if d:
+        ex, _ = sentiment.expiring_contracts(rows, d, holidays)
+        out["position,exclude_expiring"] = pc_from(
+            rows, lambda r: pos(r) and sentiment._cd(r) not in ex)
     if near:
         out[f"position,near_month_only({near})"] = pc_from(
             rows, lambda r: pos(r) and str(r.get("contract_date")).strip() == near)
@@ -162,7 +171,7 @@ def taifex_items_for(items, d: str) -> list[dict]:
     return out
 
 
-def report_day(d: str, rows: list[dict], taifex_items, p=print) -> None:
+def report_day(d: str, rows: list[dict], taifex_items, p=print, holidays=None) -> None:
     p(f"\n{'=' * 72}\n# {d}")
     same = [r for r in rows if str(r.get("date") or d)[:10] == d]
     p(f"列數：全部 {len(rows)}、當日 {len(same)}（他日 {len(rows) - len(same)}）")
@@ -188,9 +197,13 @@ def report_day(d: str, rows: list[dict], taifex_items, p=print) -> None:
         for k, g in group_sums(same, lambda r: (str(r.get("option_id")), _sess(r) or "<空>", str(r.get("call_put")))).items():
             p(f"  {k[0]:<10} {k[1]:<14} {k[2]:<6} OI={int(g['oi']):>9,} Vol={int(g['vol']):>9,} n={g['n']}")
 
-    ref = sentiment.pc_ratios(same)
-    p(f"\n## sentiment.pc_ratios（現行）：pc_oi={ref['pc_oi']} pc_vol={ref['pc_vol']} "
-      f"put_oi={ref['put_oi']} call_oi={ref['call_oi']} put_vol={ref['put_vol']} call_vol={ref['call_vol']}")
+    ex, bad = sentiment.expiring_contracts(same, d, holidays)
+    ref = sentiment.pc_ratios(same, ex)
+    p(f"\n## 當日到期契約（行事曆{'已載入' if holidays is not None else '未載入＝只排週末'}）："
+      f"{sorted(ex) or '無'}｜無法解析 {bad}")
+    p(f"## sentiment.pc_ratios（現行 cv{sentiment.SENTIMENT_CALC_VER}，排除當日到期）：pc_oi={ref['pc_oi']} "
+      f"pc_vol={ref['pc_vol']} put_oi={ref['put_oi']} call_oi={ref['call_oi']} "
+      f"put_vol={ref['put_vol']} call_vol={ref['call_vol']}")
 
     off = sentiment.parse_taifex_pc(taifex_items).get(d) if taifex_items is not None else None
     items = taifex_items_for(taifex_items, d) if taifex_items is not None else []
@@ -206,7 +219,7 @@ def report_day(d: str, rows: list[dict], taifex_items, p=print) -> None:
     p(f"  解析：PutCallOIRatio%={off_oi}  PutCallVolumeRatio%={off_vol}")
 
     p("\n## 候選口徑（OI；★＝與官方 PutCallOIRatio% 逐位相同）")
-    for name, c in candidates(same).items():
+    for name, c in candidates(same, d, holidays).items():
         star = " ★" if matches(c["pc"], off_oi) else ""
         p(f"  {name:<44} put={c['put']:>9,} call={c['call']:>9,} P/C={c['pc']} n={c['n']}{star}")
     vol_c = pc_from(same, lambda r: _sess(r) in SESSIONS, field="volume")
@@ -230,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f"期交所 OpenAPI 取不到：{type(e).__name__}: {mask_secret(e)[:200]}")
         taifex = None
+    holidays = twse_holidays.load()   # 同一班只讀一次；讀不到＝None＝只排週末
+    print(f"休市行事曆：{'已載入' if holidays is not None else '未載入（只排週末）'}")
     rc = 0
     for d in dates:
         try:
@@ -238,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\n# {d}：TaiwanOptionDaily 請求失敗")
                 rc = 1
                 continue
-            report_day(d, rows, taifex)
+            report_day(d, rows, taifex, holidays=holidays)
         except Exception as e:
             print(f"\n# {d}：例外 {type(e).__name__}: {mask_secret(e)[:300]}")
             rc = 1

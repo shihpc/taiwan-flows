@@ -72,7 +72,7 @@ TAIFEX_ITEMS = [  # 期交所 OpenAPI PutCallRatio 的欄名形狀
 DATASETS = {"TaiwanOptionVix": VIX_ROWS, "TaiwanOptionDaily": TXO_ROWS,
             "TaiwanFuturesDaily": MTX_ROWS, "TaiwanFuturesInstitutionalInvestors": INST_ROWS}
 ROW_KEYS = ["date", "vix", "pc_oi", "pc_vol", "put_oi", "call_oi", "put_vol", "call_vol",
-            "mtx_oi", "mtx_oi_monthly_only", "inst_long", "inst_short", "retail_net", "retail_ratio"]
+            "mtx_oi", "mtx_oi_monthly_only", "inst_long", "inst_short", "retail_net", "retail_ratio", "cv"]
 
 
 def fixture_fetch(calls=None, empty=(), fail=()):
@@ -150,7 +150,7 @@ def test_compute_day_matches_spec_row():
     assert row == {"date": D, "vix": 23.12, "pc_oi": 85.33, "pc_vol": 121.11,
                    "put_oi": 59603, "call_oi": 69848, "put_vol": 125974, "call_vol": 104015,
                    "mtx_oi": 37000, "mtx_oi_monthly_only": 32000, "inst_long": 3304, "inst_short": 10719,
-                   "retail_net": 7415, "retail_ratio": 20.04}
+                   "retail_net": 7415, "retail_ratio": 20.04, "cv": 2}
     assert sorted(c[0] for c in calls) == sorted(DATASETS)   # 恰 4 個請求
 
 
@@ -440,3 +440,166 @@ def test_run_daily_uses_default_budget():
     for c in calls:
         assert all(k.arg is not None for k in c.keywords), "不得以 ** 展開傳參"
         assert all(k.arg != "budget_sec" for k in c.keywords)
+
+
+# ---------- §0b：未平倉排除當日到期契約（2026-09-30） ----------
+#
+# 逐契約數字＝run 36678263476（tools/diag_pc_oi.py）印出的 09-24／09-29 TXO position 逐契約 OI 加總
+# （每契約壓成 put／call 各一列；成交量不在此驗，填 0）。官方：09-24 59603/69848＝85.33%、
+# 09-29 47553/63148＝75.30%。
+
+import twse_holidays  # noqa: E402
+
+HOL = twse_holidays.parse(json.loads(
+    (Path(__file__).resolve().parent / "fixtures" / "twse_holidays_2026.json").read_text(encoding="utf-8")))
+
+TXO_BY_CONTRACT = {
+    "2026-09-24": {"202609F4": (25184, 31654), "202609W5": (9722, 8237), "202610": (17039, 19521),
+                   "202610F1": (1088, 683), "202610W1": (1373, 323), "202611": (1467, 1204),
+                   "202612": (2641, 4247), "202703": (747, 3707), "202706": (342, 272)},
+    "2026-09-29": {"202609F4": (44870, 65523), "202609W5": (18556, 27213), "202610": (17923, 20018),
+                   "202610F1": (2771, 5389), "202610F2": (643, 140), "202610W1": (2287, 745),
+                   "202611": (1624, 1493), "202612": (2664, 4188), "202703": (752, 3679),
+                   "202706": (333, 283)},
+}
+
+
+def _txo_rows(d):
+    out = []
+    for cd, (p, c) in TXO_BY_CONTRACT[d].items():
+        out.append({"date": d, "contract_date": cd, "call_put": "put", "trading_session": "position",
+                    "open_interest": p, "volume": 0})
+        out.append({"date": d, "contract_date": cd, "call_put": "call", "trading_session": "position",
+                    "open_interest": c, "volume": 0})
+    return out
+
+
+def _txo_fetch(dataset, **params):
+    d = params["start_date"]
+    return _txo_rows(d) if dataset == "TaiwanOptionDaily" else []
+
+
+def test_contract_expiry_rules():
+    assert sentiment.contract_expiry("202609W5", HOL) == "2026-09-30"
+    assert sentiment.contract_expiry("202609F4", HOL) == "2026-09-29"   # 09-25 中秋、26/27 週末、28 教師節 → 順延
+    assert sentiment.contract_expiry("202610F2", HOL) == "2026-10-12"   # 10-09 休市 → 10-10 週六 … → 10-12
+    assert sentiment.contract_expiry("202609", HOL) == "2026-09-16"     # 6 碼＝第 3 個週三
+    assert sentiment.contract_expiry("202610", HOL) == "2026-10-21"
+    assert sentiment.contract_expiry("202610/202611", HOL) is None      # 價差：無法解析
+    for bad in (None, "", "2026", "202613", "202609X1", "202609W6", "202602W5"):  # 2026-02 只有 4 個週三
+        assert sentiment.contract_expiry(bad, HOL) is None, bad
+    # fail-open：行事曆未載入只排週末
+    assert sentiment.contract_expiry("202609F4", None) == "2026-09-25"
+    assert sentiment.contract_expiry("202610F2", None) == "2026-10-09"
+    assert sentiment.contract_expiry("202610F2", HOL) != sentiment.contract_expiry("202610F2", None)
+
+
+def test_expiring_contracts_and_unparsed():
+    rows = _txo_rows("2026-09-29") + [{"contract_date": "202610/202611"}, {"contract_date": None}]
+    ex, bad = sentiment.expiring_contracts(rows, "2026-09-29", HOL)
+    assert ex == {"202609F4"} and bad == ["202610/202611", "<空>"]
+    ex, _ = sentiment.expiring_contracts(rows, "2026-09-29", None)
+    assert ex == set()
+
+
+def test_pc_oi_0924_no_expiry_matches_official():
+    row = sentiment.compute_day("2026-09-24", _txo_fetch, HOL)
+    assert (row["put_oi"], row["call_oi"], row["pc_oi"]) == (59603, 69848, 85.33)
+    assert row["cv"] == 2
+
+
+def test_pc_oi_0929_excludes_expiring_matches_official(caplog):
+    with caplog.at_level(logging.INFO, logger=sentiment.logger.name):
+        row = sentiment.compute_day("2026-09-29", _txo_fetch, HOL)
+    assert (row["put_oi"], row["call_oi"], row["pc_oi"]) == (47553, 63148, 75.30)
+    assert "202609F4(put 44870／call 65523)" in caplog.text
+
+
+def test_pc_oi_0929_calendar_fail_open_does_not_exclude(caplog):
+    with caplog.at_level(logging.INFO, logger=sentiment.logger.name):
+        row = sentiment.compute_day("2026-09-29", _txo_fetch, None)
+    assert (row["put_oi"], row["call_oi"], row["pc_oi"]) == (92423, 128671, 71.83)
+    assert "行事曆未載入" in caplog.text and "TXO 無" in caplog.text
+
+
+def test_volume_not_excluded():
+    rows = [{"contract_date": "202609F4", "call_put": "put", "trading_session": "position",
+             "open_interest": 100, "volume": 7},
+            {"contract_date": "202609F4", "call_put": "call", "trading_session": "after_market",
+             "open_interest": 0, "volume": 3},
+            {"contract_date": "202610", "call_put": "call", "trading_session": "position",
+             "open_interest": 50, "volume": 5}]
+    pc = sentiment.pc_ratios(rows, {"202609F4"})
+    assert (pc["put_oi"], pc["call_oi"]) == (0, 50)
+    assert (pc["put_vol"], pc["call_vol"]) == (7, 8)
+    assert pc["ex_oi"] == {"202609F4": {"put": 100, "call": 0}}
+
+
+def test_mtx_excludes_expiring_both_bases():
+    d = "2026-09-29"
+    mtx = [{"futures_id": "MTX", "contract_date": "202609F4", "trading_session": "position", "open_interest": 400},
+           {"futures_id": "MTX", "contract_date": "202609W5", "trading_session": "position", "open_interest": 600},
+           {"futures_id": "MTX", "contract_date": "202610", "trading_session": "position", "open_interest": 7000}]
+    ex, _ = sentiment.expiring_contracts(mtx, d, HOL)
+    rt = sentiment.retail_ratio(mtx, INST_ROWS, exclude=ex)
+    assert rt["mtx_oi_all"] == 7600 and rt["mtx_oi_monthly_only"] == 7000
+    assert rt["mtx_ex_oi"] == {"202609F4": 400}
+    assert rt["retail_ratio"] == 97.57                  # 7415 / 7600 = 97.565… → half-up 97.57
+    assert (rt["inst_long"], rt["inst_short"]) == (3304, 10719)   # 法人多空不受影響
+
+
+def test_update_loads_calendar_once_and_passes_it(tmp_path, monkeypatch):
+    loads = []
+    monkeypatch.setattr(twse_holidays, "load", lambda *a, **k: loads.append(1) or HOL)
+    out = sentiment.update(["2026-09-24", "2026-09-29"], fetch=_txo_fetch, taifex_fetch=lambda: [],
+                           path=tmp_path / "s.json")
+    assert loads == [1]
+    assert [r["pc_oi"] for r in out["rows"]] == [85.33, 75.30]
+
+
+def test_update_calendar_fail_open_logs(tmp_path, caplog):
+    # conftest 讓預設行事曆抓取離線失敗 → load() 回 None → 只排週末
+    with caplog.at_level(logging.INFO):
+        out = sentiment.update(["2026-09-29"], fetch=_txo_fetch, taifex_fetch=lambda: [],
+                               path=tmp_path / "s.json")
+    assert out["rows"][0]["pc_oi"] == 71.83
+    assert "休市行事曆未載入" in caplog.text
+
+
+def test_update_no_todo_does_not_load_calendar(tmp_path, monkeypatch):
+    monkeypatch.setattr(twse_holidays, "load", lambda *a, **k: pytest.fail("不該讀行事曆"))
+    sentiment.update([], fetch=_txo_fetch, taifex_fetch=lambda: [], path=tmp_path / "s.json")
+
+
+def test_row_cv():
+    assert sentiment.row_cv({}) == 1 and sentiment.row_cv({"cv": True}) == 1
+    assert sentiment.row_cv({"cv": "2"}) == 1 and sentiment.row_cv({"cv": 2}) == 2
+
+
+def test_cv_old_rows_recomputed_oldest_first_with_cap_and_budget(tmp_path):
+    cal = _cal(12)
+    p = tmp_path / "s.json"
+    old = []
+    for d in cal:
+        r = dict(sentiment.compute_day(d, fixture_fetch(), None))
+        r.pop("cv")                                       # 舊版列：無 cv（＝1）
+        old.append(r)
+    old[3]["cv"] = 2                                      # 已是新版的列不重算
+    p.write_text(json.dumps({"schema": 1, "start": sentiment.SENTIMENT_START, "rows": old}), encoding="utf-8")
+
+    calls = []
+    out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p,
+                           max_days=5, holidays=None)
+    days = [d for ds, d in calls if ds == "TaiwanOptionVix"]
+    assert days == [cal[0], cal[1], cal[2], cal[4], cal[-1]]   # 由舊到新（跳過 cv=2 的 cal[3]）＋最新日
+    assert [sentiment.row_cv(r) for r in out["rows"]] == [2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2]
+
+    calls.clear()                                         # 預算仍生效：第 2 天後超標即停
+    out = sentiment.update(cal, fetch=fixture_fetch(calls), taifex_fetch=lambda: [], path=p,
+                           max_days=5, holidays=None, budget_sec=600, clock=_fake_clock(300))
+    assert [d for ds, d in calls if ds == "TaiwanOptionVix"] == [cal[5], cal[6]]
+
+    for _ in range(5):
+        out = sentiment.update(cal, fetch=fixture_fetch(), taifex_fetch=lambda: [], path=p,
+                               max_days=5, holidays=None)
+    assert all(sentiment.row_cv(r) == 2 for r in out["rows"]) and [r["date"] for r in out["rows"]] == cal

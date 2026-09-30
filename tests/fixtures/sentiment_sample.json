@@ -17,7 +17,8 @@
    "inst_long": 3304,
    "inst_short": 10236,
    "retail_net": 6932,
-   "retail_ratio": 18.74
+   "retail_ratio": 18.74,
+   "cv": 2
   },
   {
    "date": "2026-09-16",
@@ -33,7 +34,8 @@
    "inst_long": 3304,
    "inst_short": 10558,
    "retail_net": 7254,
-   "retail_ratio": 19.61
+   "retail_ratio": 19.61,
+   "cv": 2
   },
   {
    "date": "2026-09-17",
@@ -49,7 +51,8 @@
    "inst_long": 3304,
    "inst_short": 10877,
    "retail_net": 7573,
-   "retail_ratio": 20.47
+   "retail_ratio": 20.47,
+   "cv": 2
   },
   {
    "date": "2026-09-18",
@@ -65,7 +68,8 @@
    "inst_long": 3304,
    "inst_short": 11201,
    "retail_net": 7897,
-   "retail_ratio": null
+   "retail_ratio": null,
+   "cv": 2
   },
   {
    "date": "2026-09-21",
@@ -81,7 +85,8 @@
    "inst_long": 3304,
    "inst_short": 10236,
    "retail_net": 6932,
-   "retail_ratio": 18.74
+   "retail_ratio": 18.74,
+   "cv": 2
   },
   {
    "date": "2026-09-22",
@@ -97,7 +102,8 @@
    "inst_long": 3304,
    "inst_short": 10558,
    "retail_net": 7254,
-   "retail_ratio": 19.61
+   "retail_ratio": 19.61,
+   "cv": 2
   },
   {
    "date": "2026-09-23",
@@ -113,7 +119,8 @@
    "inst_long": 3304,
    "inst_short": 10877,
    "retail_net": 7573,
-   "retail_ratio": 20.47
+   "retail_ratio": 20.47,
+   "cv": 2
   },
   {
    "date": "2026-09-24",
@@ -129,7 +136,8 @@
    "inst_long": 3304,
    "inst_short": 10719,
    "retail_net": 7415,
-   "retail_ratio": 20.04
+   "retail_ratio": 20.04,
+   "cv": 2
   }
  ],
  "check": {
