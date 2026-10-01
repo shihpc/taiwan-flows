@@ -134,6 +134,19 @@
   .dmeta .stw.ok{color:var(--down)} .dmeta .stw.nodata{color:#e0b341} .dmeta .stw.bad{color:var(--up)}
   .daterow button{margin-left:auto;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);
     border-radius:6px;padding:3px 12px;font-family:inherit;font-weight:400;font-size:12px;cursor:pointer}
+  /* 前端憑證表單（2026-10-01，密碼管理器）：username 欄唯讀小字、密碼欄不可 readonly */
+  .credrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .credrow input[type=password]{flex:1 1 180px;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--fg);
+    border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit;outline:none}
+  .credu{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+  .credu input{width:17em;max-width:100%;background:transparent;border:1px dashed var(--line);color:var(--dim);
+    border-radius:6px;padding:3px 6px;font-size:11px;font-family:inherit;outline:none}
+  .credbtn{flex:0 0 auto;padding:4px 11px;border:1px solid var(--accent2);background:var(--panel);
+    color:var(--accent);border-radius:14px;cursor:pointer;font-size:12px;font-family:inherit}
+  .credbtn:disabled{opacity:.6;cursor:wait}
+  .credtab{display:block;margin-top:6px;font-size:11px;color:var(--dim)}
+  .crederr{margin-top:6px;font-size:12px;color:var(--up)}
+  .credhint{margin-top:4px;font-size:11px;color:var(--dim);line-height:1.5}
   .overlay{position:fixed;inset:0;background:#000c;z-index:50;display:none;
     align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}
   .overlay.show{display:flex}
@@ -213,7 +226,7 @@
     <button class="info-btn" id="infoBtn">ⓘ 模式說明</button>
     <input type="date" id="xlsxDate" class="xdate" title="Excel 匯出基準日（預設最新交易日，可選範圍內任一日）">
     <button class="info-btn" id="xlsxBtn">⬇ 下載 Excel</button>
-    <button class="info-btn" id="updBtn" title="觸發 GitHub Actions 重新抓取盤後資料（需一次性設定 Token）">🔄 更新資料</button>
+    <button class="info-btn" id="updBtn" title="觸發 GitHub Actions 重新抓取盤後資料（需 GitHub PAT，由瀏覽器密碼管理器載入；Shift+點 清除重載）">🔄 更新資料</button>
   </div>
   <div class="daterow" id="daterow"></div>
   <div id="totbar" class="fcard" style="display:none"></div>
@@ -248,6 +261,13 @@
       </tbody>
     </table>
     <p class="note">註：目前歷史資料約 65 個交易日，「65日」≈ 全部資料；投信庫存類欄位自 2026-05-01 起才有效，更早日期為空，隨每日累積後自然補滿。區間上限為 65 交易日（涵蓋一季）。</p>
+  </div>
+</div>
+<!-- 「🔄 更新資料」的 GitHub PAT 載入面板（2026-10-01：取代瀏覽器 prompt 對話框；PAT 改存瀏覽器密碼管理器，見 triggerUpdate） -->
+<div class="overlay" id="credOverlay">
+  <div class="modal">
+    <h3>更新資料 · GitHub PAT <span class="x" id="credClose">✕</span></h3>
+    <div id="credBody"></div>
   </div>
 </div>
 <main id="main"><div class="loading">載入中…</div></main>
@@ -1715,18 +1735,134 @@ async function buildExcel(){
 document.getElementById("xlsxBtn").onclick=buildExcel;
 
 // ---------- 手動觸發 GitHub Actions（daily-flows）重新抓資料 ----------
-// Token 只存在瀏覽器本機 localStorage，不進頁面原始碼、不上傳。Shift+點 可重設 Token。
+// 2026-10-01 起 Token 改存瀏覽器密碼管理器（頁內表單，取代瀏覽器 prompt 對話框——它不會觸發密碼管理器），
+// 載入後只在本分頁記憶體 CRED.tfgh，不進 localStorage、頁面原始碼或 URL。Shift+點 可清除後重新載入。
+// 本站唯一一種憑證：觸發 daily.yml 的 GitHub PAT（username 為家族統一名單，見 postmkt/CLAUDE.md 約定 6）
 const GH_REPO="shihpc/taiwan-flows", GH_WF="daily.yml";  // 工作流程檔名（name 為 daily-flows）
-async function triggerUpdate(reset){
-  let tok = reset ? null : localStorage.getItem("tf_gh_token");
-  if(!tok){
-    tok = prompt("貼上 GitHub Personal Access Token 以觸發更新：\n"+
-      "• 建議 fine-grained，僅本 repo、權限 Actions: Read and write\n"+
-      "• （或 classic token，勾選 repo 範圍）\n"+
-      "• 只會存在你這台瀏覽器（localStorage），不會上傳或寫進網頁");
-    if(!tok) return;
-    tok=tok.trim(); localStorage.setItem("tf_gh_token", tok);
+const CRED = { tfgh:"" };
+const CRED_SPEC = {
+  tfgh:{ user:"github-pat-flows-dispatch", label:"GitHub PAT（觸發 taiwan-flows 更新）", ph:"貼上 GitHub PAT（github_pat_…）", verify:GH_REPO },
+};
+const credOverlay = document.getElementById("credOverlay");
+function renderCredPanel(){
+  const body = document.getElementById("credBody");
+  if (CRED.tfgh){
+    body.innerHTML = `<p>GitHub PAT 本分頁已載入。</p>`
+      + `<div class="credrow"><button type="button" class="credbtn" data-tfgh-run>立即觸發更新</button>`
+      + `<button type="button" class="credbtn" data-tfgh-clear>清除（本分頁）</button></div>`;
+  } else {
+    body.innerHTML = credFormHtml("tfgh", `<p>觸發 GitHub Actions（daily-flows）重新抓資料需要一把 GitHub Personal Access Token：`
+      + `建議 fine-grained，僅本 repo、權限 Actions: Read and write（或 classic token，勾選 repo 範圍）。`
+      + `PAT 由瀏覽器密碼管理器保管、載入後只在本分頁記憶體，不上傳、不寫進網頁或 localStorage；載入時會先唯讀查一次本 repo 驗證，通過後立即觸發。</p>`);
   }
+}
+const credOpen = () => { renderCredPanel(); credOverlay.classList.add("show"); };
+const credClose = () => credOverlay.classList.remove("show");
+// 載入成功：關面板（表單隨之移出畫面）並立即觸發——使用者是按「更新資料」才走到這裡的
+const credRerender = () => { renderCredPanel(); credClose(); triggerUpdate(false); };
+// ---------- 前端憑證：改存瀏覽器密碼管理器（2026-10-01；家族四站同一套寫法，刻意不要求逐字） ----------
+// 金鑰不再寫進 localStorage。每種憑證一個 <form>：readonly 的 username 欄（家族統一的固定帳號名，
+// 讓密碼管理器把同 origin 的各把金鑰分開存、不互蓋）＋ autocomplete="current-password" 的密碼欄
+// （**不可 readonly**，Chrome／Firefox 對唯讀欄位不自動填入）＋ submit。按下送出（使用者手勢）時才讀 .value
+// ——Chrome 頁面載入時自動填入的密碼在使用者手勢前 JS 讀不到——先打一次免費、唯讀的 API 驗證，
+// 通過才收進記憶體物件 CRED，並重繪讓表單消失（密碼管理器據此判定「已送出」而提示儲存）。
+// 值只在 CRED（記憶體）；勾「只在本分頁記住」才另存 sessionStorage（關分頁即清）。不進 DOM 屬性、URL、hash。
+// 改 username＝使用者要在密碼管理器重存；四站共用同一份名單（見 postmkt/CLAUDE.md 約定 6）。
+const CRED_MIGRATE_UNTIL = "2026-10-15";   // 台北日期；之後載入頁面時無條件刪除下列舊 localStorage key
+const CRED_LEGACY = {                       // 舊版明文存 localStorage 的 key（同 origin 四站共用，每站都處理全部）
+  anthropic_key:"Anthropic API key", gh_token:"GitHub PAT（存分析結果）",
+  fm_token:"FinMind token", tf_gh_token:"GitHub PAT（taiwan-flows 更新資料）" };
+const credSsKey = k => "cred_tab_" + k;     // sessionStorage key（D2「只在本分頁記住」）
+function credLoadTab(){
+  for (const k of Object.keys(CRED)){ try{ const v = sessionStorage.getItem(credSsKey(k)); if (v) CRED[k] = v; }catch(e){} }
+}
+function credSet(k, v, tabOnly){
+  CRED[k] = v;
+  try{ if (tabOnly) sessionStorage.setItem(credSsKey(k), v); else sessionStorage.removeItem(credSsKey(k)); }catch(e){}
+}
+function credClear(k){ CRED[k] = ""; try{ sessionStorage.removeItem(credSsKey(k)); }catch(e){} }
+// 免費唯讀驗證（D5）：只打本站 CSP connect-src 已有的 origin，token 一律放 header、不進 URL。
+// Anthropic：GET /v1/models（列模型，不產生 token 用量）；GitHub：GET /repos/<repo>（讀 repo 中繼資料）。
+// 錯誤訊息只帶 HTTP 狀態碼，不帶 token。
+async function credVerify(kind, tok){
+  const how = CRED_SPEC[kind].verify;
+  if (!how) return;
+  let r;
+  if (how === "anthropic"){
+    r = await fetch("https://api.anthropic.com/v1/models?limit=1", { cache:"no-store", headers:{ "x-api-key":tok,
+      "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" } });
+  } else {
+    r = await fetch("https://api.github.com/repos/" + how, { cache:"no-store",
+      headers:{ "Authorization":"Bearer " + tok, "Accept":"application/vnd.github+json" } });
+  }
+  if (!r.ok) throw new Error(r.status === 401 ? "金鑰無效或已過期（HTTP 401）" : r.status === 403 ? "權限不足（HTTP 403）" : "HTTP " + r.status);
+}
+function credFormHtml(kind, intro){
+  const s = CRED_SPEC[kind];
+  return `<form class="credf" data-cred="${kind}" autocomplete="on">` + (intro || "")
+    + `<div class="credrow"><label class="credu">密碼管理器帳號名 <input type="text" name="username" autocomplete="username" value="${s.user}" readonly></label>`
+    + `<input type="password" name="password" autocomplete="current-password" placeholder="${s.ph}" aria-label="${s.label}">`
+    + `<button type="submit" class="credbtn">載入</button></div>`
+    + `<label class="credtab"><input type="checkbox" name="tabonly"> 只在本分頁記住（重新整理仍在、關閉分頁即清除）</label>`
+    + `<div class="crederr" hidden></div>`
+    + `<div class="credhint">第一次：貼上金鑰按「載入」，瀏覽器問要不要儲存密碼時選「儲存」。之後：點密碼欄選「${s.user}」再按「載入」。金鑰只存在密碼管理器與本分頁記憶體，不寫入 localStorage。</div>`
+    + `</form>`;
+}
+document.addEventListener("submit", async e => {
+  const f = e.target && e.target.closest ? e.target.closest("form[data-cred]") : null;
+  if (!f) return;
+  e.preventDefault();
+  const kind = f.dataset.cred;
+  if (!CRED_SPEC[kind]) return;
+  const pw = f.querySelector('input[type="password"]'), btn = f.querySelector('button[type="submit"]');
+  const box = f.querySelector(".crederr"), tabOnly = !!(f.querySelector('input[name="tabonly"]') || {}).checked;
+  const say = t => { if (box){ box.textContent = t; box.hidden = !t; } };
+  const tok = String((pw && pw.value) || "").trim();
+  if (!tok){ say("請先貼上，或點密碼欄由密碼管理器填入。"); return; }
+  if (btn){ btn.disabled = true; btn.textContent = "驗證中…"; }
+  say("");
+  try{ await credVerify(kind, tok); }
+  catch(err){
+    say("驗證失敗，未採用：" + String((err && err.message) || err));
+    if (btn){ btn.disabled = false; btn.textContent = "載入"; }
+    return;
+  }
+  credSet(kind, tok, tabOnly);
+  credRerender();
+});
+// 搬移期（D7）：偵測到舊 key 只顯示提示卡、按鈕才刪；新版**不讀**舊值當金鑰。期滿後載入即無條件刪。
+const credTodayTpe = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+function credLegacyFound(){
+  return Object.keys(CRED_LEGACY).filter(k => { try{ return localStorage.getItem(k) !== null; }catch(e){ return false; } });
+}
+function credLegacyPurge(){ for (const k of Object.keys(CRED_LEGACY)){ try{ localStorage.removeItem(k); }catch(e){} } }
+function credMigrateCard(){
+  let el = document.getElementById("credMigrate");
+  const found = credLegacyFound();
+  if (!found.length){ if (el) el.remove(); return; }
+  if (!el){ el = document.createElement("div"); el.id = "credMigrate"; el.setAttribute("role", "alert"); document.body.prepend(el); }
+  el.style.cssText = "margin:8px;padding:10px 14px;border:1px solid #e0b341;border-radius:10px;background:#2b2410;color:#f3e3bd;font-size:.84rem;line-height:1.6";
+  el.innerHTML = `<b>金鑰儲存方式已變更</b>：這台瀏覽器的 localStorage 還留著舊版明文存放的 `
+    + found.map(k => esc(CRED_LEGACY[k])).join("、")
+    + `。新版已不再讀取它，改由瀏覽器密碼管理器保管（設定區「載入」表單）。`
+    + `請先確認這些金鑰已存進密碼管理器（手邊沒有副本時，可在瀏覽器開發者工具的 Application → Local Storage 查看原值），再按下方按鈕刪除本機舊副本。`
+    + `${CRED_MIGRATE_UNTIL} 之後開啟本站會自動刪除。`
+    + `<div style="margin-top:8px"><button type="button" data-cred-legacy-del style="background:#e0b341;color:#1a1408;border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer">刪除本機舊副本</button></div>`;
+}
+document.addEventListener("click", e => {
+  if (!e.target.closest || !e.target.closest("[data-cred-legacy-del]")) return;
+  credLegacyPurge(); credMigrateCard();
+});
+function credInit(){
+  credLoadTab();
+  if (credTodayTpe() > CRED_MIGRATE_UNTIL) credLegacyPurge(); else credMigrateCard();
+}
+// ---------- 前端憑證結束 ----------
+credInit();
+async function triggerUpdate(reset){
+  if(reset) credClear("tfgh");
+  const tok = CRED.tfgh;
+  if(!tok){ credOpen(); return; }
   const btn=document.getElementById("updBtn"), old=btn.textContent; btn.textContent="觸發中…";
   try{
     const r=await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${GH_WF}/dispatches`,{
@@ -1737,8 +1873,8 @@ async function triggerUpdate(reset){
     if(r.status===204){
       alert("✅ 已觸發更新（daily-flows）。\n約 2-3 分鐘後資料更新完成，請稍後重新整理本頁。\n\n提醒：三大法人資料約 20:00 才齊，太早觸發可能抓不到當日法人。");
     } else if(r.status===401 || r.status===403){
-      localStorage.removeItem("tf_gh_token");
-      alert("❌ Token 無效或權限不足（已清除）。\n請再點一次「更新資料」並貼上具 Actions 讀寫權限的 Token。");
+      credClear("tfgh");
+      alert("❌ Token 無效或權限不足（已從本分頁清除）。\n請再點一次「更新資料」並載入具 Actions 讀寫權限的 Token。");
     } else {
       const t=await r.text();
       alert("❌ 觸發失敗（HTTP "+r.status+"）：\n"+t.slice(0,300));
@@ -1747,6 +1883,12 @@ async function triggerUpdate(reset){
   finally{ btn.textContent=old; }
 }
 document.getElementById("updBtn").onclick=e=>triggerUpdate(e.shiftKey);
+document.getElementById("credClose").onclick = credClose;
+credOverlay.onclick = e=>{ if(e.target===credOverlay) credClose(); };
+document.getElementById("credBody").addEventListener("click", e=>{
+  if(e.target.closest("[data-tfgh-run]")){ credClose(); triggerUpdate(false); return; }
+  if(e.target.closest("[data-tfgh-clear]")){ credClear("tfgh"); renderCredPanel(); }
+});
 
 // ---------- info overlay ----------
 const overlay = document.getElementById("overlay");

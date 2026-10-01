@@ -111,7 +111,7 @@
   - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
   - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
   - Excel：**auto-fit 自動欄寬**（消除 #######）、四張並排表字體 11、可選**匯出基準日**、各表標**資料源日期**、ETF市值表移投信/自營佔比。
-  - 前端：三大法人卡/台指期卡/ETF概況**可開合**（localStorage）、表格**響應式高度**、各卡/tab**資料源日期徽章**（偵測落後）、右上角改顯示**更新時間**、網頁**「🔄 更新資料」鈕**（PAT 觸發 workflow_dispatch）。
+  - 前端：三大法人卡/台指期卡/ETF概況**可開合**（localStorage）、表格**響應式高度**、各卡/tab**資料源日期徽章**（偵測落後）、右上角改顯示**更新時間**、網頁**「🔄 更新資料」鈕**（PAT 觸發 workflow_dispatch；2026-10-01 起 PAT 改存瀏覽器密碼管理器）。
   - **ETF 佔比語意**：市值排行＝持股市值/總市值（外資準、投信/自營對ETF無來源顯「—」、自營佔比欄已移除）；成交金額排行＝成交量參與率(買+賣張)/(2×成交張)。
 - **FinMind 現況**：Sponsor **已續約/恢復正常**（2026-06-28，產業鏈等 Sponsor 級資料集可正常抓）。`TaiwanStockPrice` 對**非交易日**（如週末）查詢會回 **HTTP 400 → fm_get 回 None → 報 error**，所以週末手動觸發更新會變紅（屬正常、非 bug）。
 - **⚠ 2026-06-26 daily 價格事故（已修）**：6/26 排程跑時 FinMind `TaiwanStockPrice` 尚未更新完成，**922/2687 檔（高價權值股居多，如 2330 存 227 vs 正確 2340）價格被寫成暫定/舊值**，但法人張數正確 → 衍生金額/成交值/市值/Excel/類股資金流全錯。**偵測**：daily.close 與權威 `TaiwanStockPrice` 逐檔比對；**補救**：`python src/pipeline.py --date 2026-06-26` 重抓（現已正確）→ 重跑 budget/sectors。已對全期間掃描：僅 6/26 中招、已修，其餘全相符。
@@ -238,7 +238,7 @@ GitHub Pages
 | 圖片／字型／iframe／object | 無 `<img>`、無外部字型、無 iframe | `img-src 'self' data:`、`object-src 'none'` 純收緊 |
 | `eval`／`new Function`／`javascript:` URL／`document.write` | **0 處** | 不需 `'unsafe-eval'` |
 | `innerHTML` 拼字串 | **18 處**；**格式器層已 `esc()`＋管線消毒（2026-09-06）**：前端 `esc()`（`index.html:412`，逃 `&<>"'`）套在 `COL_NAME`（`:462`）、`.sectlink`／`.subsectlink` 格式器（`:651`、`:688`）、類股／次產業明細標題（`:686`、`:702`、`:745`）與 `updateDateLabel` 的狀態 `title=`（`:862`）——`r.name`／`r.sector`／`r.sub` 全部經此進 DOM；`data-sector`／`data-sub` 屬性走 `encodeURIComponent`。管線端 `src/sanitize.py` `sanitize_label()` 去 `<>"'`＋控制字元、截 40 字，套在 `build_meta.py` 寫 name／industry、`sectors.py --build-chain` 寫產業／次產業、`budget.py aggregate` 寫 latest name／industry 三處（**`&` 刻意保留**：14 檔 `S&P` ETF 與產業鏈「MR Headset & SG」是真實名稱，實查 `tests/test_sanitize.py` 守現行資料零變動）。`cellText()` 仍以 detached div 的 innerHTML 抽純文字做排序，`esc()` 後 `textContent` 還原為原字串、排序不受影響（Playwright 實測名稱／數值欄升降冪皆正確） | 信任邊界原為「repo 內容」，但股名／產業名實際來自 FinMind（`build_meta.py:93`），`'unsafe-inline'` 之下 CSP 擋不住這條路，故補前端逃逸＋管線消毒兩道；Playwright 以 `<img onerror>` 股名／產業名注入 8 tab 實測 `window.__xss` 未觸發、畫面顯示字面文字 |
-| localStorage 內容 | `tf_gh_token`（只送 Authorization header）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
+| localStorage 內容 | **金鑰 2026-10-01 起不再存 localStorage**（舊 `tf_gh_token` 只用於搬移提示卡與刪除，見「網頁手動更新鍵」）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
 
 `base-uri 'none'`：頁面無 `<base>`，也不會需要。**新增資料源／CDN 時要同步改 `connect-src`／`script-src`**，
 否則瀏覽器只在 console 印 `Refused to connect/load`、畫面上是靜默失敗（`jsonOrNull` 會把它吞成 null）。
@@ -448,7 +448,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 限制：「外資買賣超」工作表是完整歷史（近期段相對最新日），不隨選定的過去 d2 改變。
 
 ### 網頁手動更新鍵
-- 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。Token 由使用者一次性貼上、存瀏覽器 `localStorage('tf_gh_token')`（不進原始碼/不上傳）；Shift+點 可重設 Token；401/403 自動清除。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
+- 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。**2026-10-01 起 Token 改存瀏覽器密碼管理器**（取代瀏覽器的 prompt 對話框——它不會觸發密碼管理器）：未載入時點鈕開頁內面板 `#credOverlay`，`<form data-cred="tfgh">` 的 username 固定 `github-pat-flows-dispatch`（readonly）＋`current-password` 密碼欄；按「載入」先唯讀打 `GET api.github.com/repos/shihpc/taiwan-flows`（token 放 header）驗證，通過才收進記憶體 `CRED.tfgh`、關面板並立即觸發；勾「只在本分頁記住」才寫 sessionStorage `cred_tab_tfgh`。**不再寫 localStorage**；舊 `tf_gh_token` 只用於頁頂搬移提示卡與「刪除本機舊副本」，`CRED_MIGRATE_UNTIL`（2026-10-15 台北）後載入即刪（四站同一套，正本見 `postmkt/CLAUDE.md` 約定 6）。Shift+點＝清除本分頁 token 後重開面板；401/403 自動清除記憶體 token。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
 
 ### 第四批 Excel 微調
 - 漲跌幅欄位（mP）改一位小數 `0.0"%"`。
