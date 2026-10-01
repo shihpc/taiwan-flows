@@ -1744,22 +1744,17 @@ const CRED_SPEC = {
   tfgh:{ user:"github-pat-flows-dispatch", label:"GitHub PAT（觸發 taiwan-flows 更新）", ph:"貼上 GitHub PAT（github_pat_…）", verify:GH_REPO },
 };
 const credOverlay = document.getElementById("credOverlay");
+// 面板只在本分頁「尚未載入 PAT」時打開（triggerUpdate 有 token 就直接觸發；Shift+點先清除），所以只有表單一種狀態
 function renderCredPanel(){
-  const body = document.getElementById("credBody");
-  if (CRED.tfgh){
-    body.innerHTML = `<p>GitHub PAT 本分頁已載入。</p>`
-      + `<div class="credrow"><button type="button" class="credbtn" data-tfgh-run>立即觸發更新</button>`
-      + `<button type="button" class="credbtn" data-tfgh-clear>清除（本分頁）</button></div>`;
-  } else {
-    body.innerHTML = credFormHtml("tfgh", `<p>觸發 GitHub Actions（daily-flows）重新抓資料需要一把 GitHub Personal Access Token：`
-      + `建議 fine-grained，僅本 repo、權限 Actions: Read and write（或 classic token，勾選 repo 範圍）。`
-      + `PAT 由瀏覽器密碼管理器保管、載入後只在本分頁記憶體，不上傳、不寫進網頁或 localStorage；載入時會先唯讀查一次本 repo 驗證，通過後立即觸發。</p>`);
-  }
+  document.getElementById("credBody").innerHTML = credFormHtml("tfgh", `<p>觸發 GitHub Actions（daily-flows）重新抓資料需要一把 GitHub Personal Access Token：`
+    + `建議 fine-grained，僅本 repo、權限 Actions: Read and write（或 classic token，勾選 repo 範圍）。`
+    + `PAT 由瀏覽器密碼管理器保管、載入後只在本分頁記憶體，不上傳、不寫進網頁或 localStorage。`
+    + `載入時會先唯讀查一次本 repo 驗證，通過後立即觸發——這只證明 PAT 有效（本 repo 是 public），<b>不證明</b>它有 Actions 寫入權限；權限不足會在觸發時顯示 403。</p>`);
 }
 const credOpen = () => { renderCredPanel(); credOverlay.classList.add("show"); };
 const credClose = () => credOverlay.classList.remove("show");
-// 載入成功：關面板（表單隨之移出畫面）並立即觸發——使用者是按「更新資料」才走到這裡的
-const credRerender = () => { renderCredPanel(); credClose(); triggerUpdate(false); };
+// 載入成功：清空並關閉面板（表單自 DOM 移除）後立即觸發——使用者是按「更新資料」才走到這裡的
+const credRerender = () => { document.getElementById("credBody").innerHTML = ""; credClose(); triggerUpdate(false); };
 // ---------- 前端憑證：改存瀏覽器密碼管理器（2026-10-01；家族四站同一套寫法，刻意不要求逐字） ----------
 // 金鑰不再寫進 localStorage。每種憑證一個 <form>：readonly 的 username 欄（家族統一的固定帳號名，
 // 讓密碼管理器把同 origin 的各把金鑰分開存、不互蓋）＋ autocomplete="current-password" 的密碼欄
@@ -1885,10 +1880,6 @@ async function triggerUpdate(reset){
 document.getElementById("updBtn").onclick=e=>triggerUpdate(e.shiftKey);
 document.getElementById("credClose").onclick = credClose;
 credOverlay.onclick = e=>{ if(e.target===credOverlay) credClose(); };
-document.getElementById("credBody").addEventListener("click", e=>{
-  if(e.target.closest("[data-tfgh-run]")){ credClose(); triggerUpdate(false); return; }
-  if(e.target.closest("[data-tfgh-clear]")){ credClear("tfgh"); renderCredPanel(); }
-});
 
 // ---------- info overlay ----------
 const overlay = document.getElementById("overlay");

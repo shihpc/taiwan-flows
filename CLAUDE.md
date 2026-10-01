@@ -448,7 +448,7 @@ daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_
 - 限制：「外資買賣超」工作表是完整歷史（近期段相對最新日），不隨選定的過去 d2 改變。
 
 ### 網頁手動更新鍵
-- 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。**2026-10-01 起 Token 改存瀏覽器密碼管理器**（取代瀏覽器的 prompt 對話框——它不會觸發密碼管理器）：未載入時點鈕開頁內面板 `#credOverlay`，`<form data-cred="tfgh">` 的 username 固定 `github-pat-flows-dispatch`（readonly）＋`current-password` 密碼欄；按「載入」先唯讀打 `GET api.github.com/repos/shihpc/taiwan-flows`（token 放 header）驗證，通過才收進記憶體 `CRED.tfgh`、關面板並立即觸發；勾「只在本分頁記住」才寫 sessionStorage `cred_tab_tfgh`。**不再寫 localStorage**；舊 `tf_gh_token` 只用於頁頂搬移提示卡與「刪除本機舊副本」，`CRED_MIGRATE_UNTIL`（2026-10-15 台北）後載入即刪（四站同一套，正本見 `postmkt/CLAUDE.md` 約定 6）。Shift+點＝清除本分頁 token 後重開面板；401/403 自動清除記憶體 token。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
+- 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。**2026-10-01 起 Token 改存瀏覽器密碼管理器**（取代瀏覽器的 prompt 對話框——它不會觸發密碼管理器）：未載入時點鈕開頁內面板 `#credOverlay`，`<form data-cred="tfgh">` 的 username 固定 `github-pat-flows-dispatch`（readonly）＋`current-password` 密碼欄；按「載入」先唯讀打 `GET api.github.com/repos/shihpc/taiwan-flows`（token 放 header）驗證（本 repo 是 public，回 200 只證明 PAT 有效、**不證明有 Actions 寫入權限**，權限不足要到觸發時才看到 403），通過才收進記憶體 `CRED.tfgh`、關面板並立即觸發；勾「只在本分頁記住」才寫 sessionStorage `cred_tab_tfgh`。**不再寫 localStorage**；舊 `tf_gh_token` 只用於頁頂搬移提示卡與「刪除本機舊副本」，`CRED_MIGRATE_UNTIL`（2026-10-15 台北）後載入即刪（四站同一套，正本見 `postmkt/CLAUDE.md` 約定 6）。Shift+點＝清除本分頁 token 後重開面板；401/403 自動清除記憶體 token。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
 
 ### 第四批 Excel 微調
 - 漲跌幅欄位（mP）改一位小數 `0.0"%"`。
