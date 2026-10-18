@@ -14,9 +14,9 @@
 | 臺指 VIX | `TaiwanOptionVix`（欄位 `date`／`time`／`vix`，分鐘級） | 每日取**當日最後一筆**（實測 `13:45:00`） | 23.12；**歷史最早 2026-03-02**，2024-06 查詢 0 筆＝資料集本身從此開始，不是截斷 |
 | Put/Call 未平倉比 | `TaiwanOptionDaily` `data_id=TXO` | Σ put `open_interest` ÷ Σ call `open_interest`，**只取 `trading_session=="position"`**（盤後時段 OI 為 0） | 59,603÷69,848＝**85.33%**，與期交所官方 `PutCallOIRatio%` 逐位相同 |
 | Put/Call 成交量比 | 同上 | Σ put `volume` ÷ Σ call `volume`，**`position`＋`after_market` 兩時段合計** | put 83,032＋42,942＝125,974、call 54,472＋49,543＝104,015 → **121.11%**，與官方逐位相同 |
-| 小台散戶多空比 | `TaiwanFuturesDaily` `data_id=MTX`＋`TaiwanFuturesInstitutionalInvestors` `data_id=MTX` | 散戶淨部位＝法人空單合計－法人多單合計（三大法人 `short/long_open_interest_balance_volume` 加總）；**散戶多空比＝散戶淨部位 ÷ 全市場未平倉量**（全市場＝`trading_session=="position"` 的 `open_interest` 加總） | 法人多 3,304、空 10,719 → 散戶淨 **+7,415 口**；全市場 OI 待首跑取得 |
+| 小台散戶多空比 | `TaiwanFuturesDaily` `data_id=MTX`＋`TaiwanFuturesInstitutionalInvestors` `data_id=MTX` | 散戶淨部位＝法人空單合計－法人多單合計（三大法人 `short/long_open_interest_balance_volume` 加總）；**散戶多空比＝散戶淨部位 ÷ 全市場未平倉量**（全市場＝`trading_session=="position"` 的 `open_interest` 加總） | 法人多 3,304、空 10,719 → 散戶淨 **+7,415 口**；全市場 OI 於 2026-09-24 撰寫時未取得（現由每日管線產出） |
 
-- **未定口徑（首跑要比對）**：小台全市場未平倉是否含週契約（`contract_date` 形如 `202609W5`）。實作要**兩種都算**：主值＝**全部契約**；另存 `mtx_oi_monthly_only` 供比對。首跑後由使用者或主對話依公開來源擇一，改常數即可。
+- **口徑已定案（2026-10-18 使用者裁定：維持全部契約）**：小台全市場未平倉含週契約（`contract_date` 形如 `202609W5`）。實作**兩種都算**：主值＝**全部契約**；`mtx_oi_monthly_only` 照存、前端並列僅供參考。（原為「未定口徑（首跑要比對）」）
 - 期交所 OpenAPI `https://openapi.taifex.com.tw/v1/PutCallRatio`（Hetzner 可達，回最近約 19 個交易日）**只作交叉核對**，不是主資料源；GitHub runner 能否連到未知，連不到時跳過、不影響產出。
 
 ## 0b. 未平倉口徑更正：排除當日到期契約（2026-09-30，使用者裁決「照建議」）
