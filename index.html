@@ -1763,8 +1763,7 @@ const credRerender = () => { document.getElementById("credBody").innerHTML = "";
 // 通過才收進記憶體物件 CRED，並重繪讓表單消失（密碼管理器據此判定「已送出」而提示儲存）。
 // 值只在 CRED（記憶體）；勾「只在本分頁記住」才另存 sessionStorage（關分頁即清）。不進 DOM 屬性、URL、hash。
 // 改 username＝使用者要在密碼管理器重存；四站共用同一份名單（見 postmkt/CLAUDE.md 約定 6）。
-const CRED_MIGRATE_UNTIL = "2026-10-15";   // 台北日期；之後載入頁面時無條件刪除下列舊 localStorage key
-const CRED_LEGACY = {                       // 舊版明文存 localStorage 的 key（同 origin 四站共用，每站都處理全部）
+const CRED_LEGACY = {                       // 舊版明文存 localStorage 的 key（同 origin 四站共用，每站都處理全部；載入即刪，見 credInit）
   anthropic_key:"Anthropic API key", gh_token:"GitHub PAT（存分析結果）",
   fm_token:"FinMind token", tf_gh_token:"GitHub PAT（taiwan-flows 更新資料）" };
 const credSsKey = k => "cred_tab_" + k;     // sessionStorage key（D2「只在本分頁記住」）
@@ -1825,32 +1824,12 @@ document.addEventListener("submit", async e => {
   credSet(kind, tok, tabOnly);
   credRerender();
 });
-// 搬移期（D7）：偵測到舊 key 只顯示提示卡、按鈕才刪；新版**不讀**舊值當金鑰。期滿後載入即無條件刪。
-const credTodayTpe = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
-function credLegacyFound(){
-  return Object.keys(CRED_LEGACY).filter(k => { try{ return localStorage.getItem(k) !== null; }catch(e){ return false; } });
-}
+// 舊 key（D7）：搬移期 2026-10-15 已過，提示卡與「刪除本機舊副本」按鈕已於 2026-10-18 移除；
+// 現在載入頁面即無條件刪除四把舊 key（不看日期）。新版**不讀**舊值當金鑰；只 removeItem、不 setItem。
 function credLegacyPurge(){ for (const k of Object.keys(CRED_LEGACY)){ try{ localStorage.removeItem(k); }catch(e){} } }
-function credMigrateCard(){
-  let el = document.getElementById("credMigrate");
-  const found = credLegacyFound();
-  if (!found.length){ if (el) el.remove(); return; }
-  if (!el){ el = document.createElement("div"); el.id = "credMigrate"; el.setAttribute("role", "alert"); document.body.prepend(el); }
-  el.style.cssText = "margin:8px;padding:10px 14px;border:1px solid #e0b341;border-radius:10px;background:#2b2410;color:#f3e3bd;font-size:.84rem;line-height:1.6";
-  el.innerHTML = `<b>金鑰儲存方式已變更</b>：這台瀏覽器的 localStorage 還留著舊版明文存放的 `
-    + found.map(k => esc(CRED_LEGACY[k])).join("、")
-    + `。新版已不再讀取它，改由瀏覽器密碼管理器保管（設定區「載入」表單）。`
-    + `請先確認這些金鑰已存進密碼管理器（手邊沒有副本時，可在瀏覽器開發者工具的 Application → Local Storage 查看原值），再按下方按鈕刪除本機舊副本。`
-    + `${CRED_MIGRATE_UNTIL} 之後開啟本站會自動刪除。`
-    + `<div style="margin-top:8px"><button type="button" data-cred-legacy-del style="background:#e0b341;color:#1a1408;border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer">刪除本機舊副本</button></div>`;
-}
-document.addEventListener("click", e => {
-  if (!e.target.closest || !e.target.closest("[data-cred-legacy-del]")) return;
-  credLegacyPurge(); credMigrateCard();
-});
 function credInit(){
   credLoadTab();
-  if (credTodayTpe() > CRED_MIGRATE_UNTIL) credLegacyPurge(); else credMigrateCard();
+  credLegacyPurge();
 }
 // ---------- 前端憑證結束 ----------
 credInit();
