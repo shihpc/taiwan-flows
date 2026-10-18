@@ -331,9 +331,9 @@ GitHub Pages
   put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio, cv}], check:{taifex_pc:{date,
   pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`（`cv` 為整數、2026-09-30 起附加，舊列可能缺）。
   `check.taifex_pc` 異常時另帶 `note`（`unreachable：…`＝連不到期交所、或「無共同日期」），此時 `date`／`match` 為 `null`。
-- **⚠ 首跑待定口徑**：小台全市場未平倉含不含週契約（`contract_date` 形如 `202609W5`）尚未定案。兩種都算：主值
-  `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者。`retail_ratio`
-  依主值口徑算。首班跑完後把兩個數字回報使用者擇一，定案＝改 `MTX_OI_MAIN` 常數（`"monthly"`）。
+- **小台全市場未平倉口徑（2026-10-18 使用者裁定：維持全部契約）**：含週契約（`contract_date` 形如 `202609W5`）。兩種都算：主值
+  `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`，定案、不改），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者（照存，
+  postmkt 並列「僅供參考」、已拿掉「口徑比對中」徽章）。`retail_ratio` 依主值口徑算。
   runner log 每天有一行 `sentiment <date>: … MTX 全市場 OI 全部契約=… 僅月契約=…` 供比對。
   **定案改 `MTX_OI_MAIN` 時要同步改 postmkt 前端寫死的「全部契約」說明文字**（`postmkt/index.html` grep `全部契約`），
   否則畫面會把月契約口徑的數字標成全部契約。

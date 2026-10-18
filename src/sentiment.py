@@ -10,9 +10,8 @@
 #   小台散戶     TaiwanFuturesInstitutionalInvestors data_id=MTX 三大法人多／空未平倉加總
 #                → 散戶淨部位＝法人空 − 法人多；散戶多空比＝散戶淨部位 ÷ 全市場未平倉
 #                （全市場＝TaiwanFuturesDaily data_id=MTX、position 時段的 open_interest 加總）
-#   **未定口徑**：全市場未平倉含不含週契約（contract_date 形如 202609W5）。主值 mtx_oi＝全部契約，
-#   另存 mtx_oi_monthly_only（排除 contract_date 含 "W" 的週契約）供首跑比對；定案後改
-#   MTX_OI_MAIN 常數即可（"all" | "monthly"）。
+#   **口徑已定案（2026-10-18 使用者裁定）**：全市場未平倉主值 mtx_oi＝全部契約（含 contract_date 形如
+#   202609W5 的週契約）。mtx_oi_monthly_only（排除含 "W" 的週契約）照算照存、前端並列僅供參考。
 #   **未平倉排除當日到期契約**（2026-09-30，docs/sentiment-tab.md §0b）：put_oi／call_oi／pc_oi 與
 #   mtx_oi／mtx_oi_monthly_only／retail_ratio 不計「到期日＝資料日」的契約（到期結算後已不存在，官方
 #   未平倉不含它；run 36678263476 實證 09-29 扣掉 202609F4 後與期交所逐口相同）。成交量與法人多空不變。
@@ -62,7 +61,7 @@ SENTIMENT_BUDGET_SEC = 300          # 每班牆鐘總預算（秒）：daily.yml
                                     # daily.yml 最壞總長≈47.8 分（600 秒時≈52.8 分逼近 55 分，故降為 300）。不含 checkout／pip／push；
                                     # requests timeout=30 同時是 connect 與單次 read 逾時，極慢串流理論上無上限（推估、未實測）
 SENTIMENT_REFRESH_DAYS = 3          # 最近 N 個交易日若有 null 欄位，下一班重算（資料晚到）
-MTX_OI_MAIN = "all"                 # 全市場未平倉主值口徑："all"（全部契約）| "monthly"（僅月契約）——首跑比對後定案
+MTX_OI_MAIN = "all"                 # 全市場未平倉主值口徑："all"（全部契約）| "monthly"（僅月契約）——2026-10-18 使用者裁定維持 "all"
 TAIFEX_PC_URL = "https://openapi.taifex.com.tw/v1/PutCallRatio"   # 只作交叉核對，不是主資料源
 SCHEMA = 1
 SENTIMENT_CALC_VER = 2              # 每列 cv：計算版本。1（舊列無此鍵）＝未排除當日到期契約；2＝§0b 規則。
@@ -342,7 +341,7 @@ def compute_day(d: str, fetch: Callable | None = None, holidays=None) -> dict:
            "retail_net": rt["retail_net"], "retail_ratio": rt["retail_ratio"],
            # 行事曆讀不到（fail-open 只排週末）時，休市順延的到期日可能判錯 → 記 cv=1，下一班讀得到行事曆時自動重算
            "cv": SENTIMENT_CALC_VER if holidays is not None else 1}
-    # 首跑比對用（小台全市場口徑未定案）：兩種口徑與 VIX 取樣時點印一行（無 token）
+    # 兩種口徑並列記錄（主值已定案為全部契約）：兩種口徑與 VIX 取樣時點印一行（無 token）
     logger.info(f"sentiment {d}: VIX={v['vix']}@{v['time']}（{v['n']} 筆）｜P/C OI={pc['pc_oi']}% "
                 f"Vol={pc['pc_vol']}%｜MTX 全市場 OI 全部契約={rt['mtx_oi_all']} 僅月契約={rt['mtx_oi_monthly_only']}"
                 f"（主值口徑={MTX_OI_MAIN}）｜法人多={rt['inst_long']} 空={rt['inst_short']} "
