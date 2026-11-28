@@ -1,0 +1,431 @@
+# taiwan-flows 接手文件全文存檔（2026-11-28 瘦身前）
+
+> 這是 2026-11-28 `CLAUDE.md` 瘦身前的接手文件全文存檔（頂端 CANON 鐵律區塊以外的部分，原樣複製、一字未改）。
+> 內容為當時記載，**可能已過期**；現況一律以 `CLAUDE.md` 為準。事故經過、更正歷史、量測數字、歷次批次明細只保留在這裡。
+> 文中的 `index.html:行號` 為當時量測，行號會漂移，請改用宣告字串 grep。
+
+---
+
+（以下為原文；原檔標題行之後即 CANON 區塊，此處略去區塊本身）
+
+# taiwan-flows — 開發接軌文件（給新 Session / 新對話）
+
+三大法人資金流看板：**外資進出 / 投信進出 / 外資投信同步 / 外資投信對作 / ETF市值 / 外資買賣超** 六個分頁。
+（「籌碼雷達」tab 2026-09-28 上線後同日搬到 postmkt（tab id `chipradar`），本站已移除、回到 8 個 `data-tab`；規格正本仍是本 repo `docs/radar-tab.md`。）
+盤後資料 → GitHub Actions 每日抓取與預算 → commit JSON → GitHub Pages 純前端秒載。
+
+- **本機位置**：`C:\Users\施伯承\Desktop\Claude\taiwan-flows`
+- **GitHub**：https://github.com/shihpc/taiwan-flows （main 分支）
+- **線上**：https://shihpc.github.io/taiwan-flows/
+- **規格書**：`taiwan-flows-spec_V1.md`（V1 定稿，部分已被後續需求覆蓋，見下方「規格後的演進」）
+- **姊妹專案**：`taiwan-stock-radar`（radar 之後會以本專案輸出的 JSON 為資料源）
+- **日期欄語意**：`latest.json`/`meta.json` 的 `date`／`generated_at`（台北 +08:00）／`baseline_date`（投信庫存累計種子日，凍結於 2026-04-30；注意發行張數 `issued_lots` 本身每交易日更新，非凍結）等欄位語意，與跨站產出檔的統一對照，見 postmkt repo 的 `docs/date-semantics.md`。
+
+## 快速接手（最新狀態，2026-09-06 更新）
+
+- **2026-09-06 改動摘要**：①真交易日缺料不再靜默——`run_daily.classify_no_data()` 把「無資料」三分為
+  `no_data`（週末）／`waiting`（平日 20:00 截止前）／`missing`（過截止仍缺料→重試、用盡亮紅），
+  `status.json` 新增 `expected_date`／`actual_date`／`last_attempt_at`／`last_success_at`，
+  `verify_daily` 改驗 `expected_date`（不再拿昨天的檔驗今天）並在 `missing` 時重跑補回，
+  `healthcheck` 加列數健全性（近 20 檔中位數 80%→warn／50%→critical），前端右上角新增
+  「資料缺漏」(紅)／「等待資料發布」(黃)；測試 `tests/test_status_classify.py`（日期相對現在）。
+  ②ExcelJS 改按需載入（`ensureExcelJS()`，首屏少 256KB gzip）。③本檔多處數字依實測更正（見各處括註）。
+- **資料現況**：全站對齊 **2026-07-24**（91 個交易日，2026-03-11 起）。每日排程**週一~五 21:19 台北**自動跑（`cron: 19 13 * * 1-5`；2026-07-14 由 21:00 延後——TaiwanStockShareholding 官方 21:00 更新，留緩衝）。
+- **雙觸發**：主觸發是 `taiwan-flow-live-v2` 的 Cloudflare Worker「FinMind 哨兵」（台北 **17:00–22:55** 每 5 分探測法人/持股落地，一落地就 `workflow_dispatch` daily.yml，通常早於 cron；時窗與 `src/run_daily.py` `target_trading_day()` docstring 一致，實測 2026-09-01～04 每日首筆 data commit 皆 09:01 UTC＝台北 17:01。本段原寫 19:00–23:00，2026-09-06 更正）；cron 留作備援，管線冪等、多跑無害。哨兵程式：`taiwan-flow-live-v2/worker/src/index.js` 的 `runSentinel`。
+- **另有兩支 workflow**（2026-07-25 新增）：`verify.yml`（23:40 台北，延後獨立驗證收盤價 + 必要時重抓修復）、`parity.yml`（改到 src/index.html 就跑前後端口徑一致性測試，**不需 token**）。
+
+### 2026-07-25 優化批次（全部已驗證）
+
+| 項目 | 內容 |
+|------|------|
+| **健檢改延後班** | 原本 `run_daily` 在 pipeline 後立刻跑 healthcheck，但它比對的權威源就是 pipeline 剛用過的 `TaiwanStockPrice`，同一次排程內相隔幾秒必然拿到同一份回應 → severity 恆為 ok，**6/26 那類事故完全驗不出來**（6/26 驗得出來是因為事後手動 `--date` 跑）。改由 `src/verify_daily.py` + `verify.yml`（23:40 台北）延後獨立驗證，critical 時直接重抓並重算衍生產出。`run_daily` 當天先把 `status.json.healthcheck.severity` 標 `pending`。 |
+| **前後端 parity 測試** | `tests/parity.py` + `tests/extract_js.mjs`：從 index.html 抽出 `aggregateRange`/`jPage*`/`cmpD` 在 node 沙箱跑同一份 daily，與 Python 逐檔逐欄比對（5 視窗全比、零容差）。**抓出 3 類真實漂移並修掉**：①`bias20` 的 MA20 取樣（Python 取「最後 20 個有效收盤」會往停牌前補樣本，JS 取「最近 20 交易日」）②四捨五入（Python `round` 是 banker's、JS `Math.round` 是 half-up → 每視窗數十檔 `*_amt` 差 1 千元；已統一走 `budget.jround`）③排序 tie-break（主鍵同值時 JS 物件把「像整數的鍵」排在字串鍵前，Python 依 meta.stocks 插入序 → **Top30 選出的成員都不同**；兩邊都加次鍵 `code`／類股用 `sector`）。 |
+| **token 改 lazy** | `finmind.py` 原本模組層 `TOKEN = _load_token()`，任何 import 鏈碰到就必須有 token → `budget`/`sectors` 明明只讀本地 JSON 也被綁死，無法離線重算或寫測試。改 `get_token()` 延後取。parity workflow 因此不需要 secret。 |
+| **daily.yml timeout 30→55 分** | 重試迴圈是 3 次 run_daily（各 3~5 分）＋ 2 次 `sleep 600`，原本 30 分會在第三次嘗試中途被砍；**job 被 timeout 砍時 `Commit & push` 不會執行**，等於前兩次抓好的資料整包丟掉。 |
+| **前端首屏** | `sector_latest.json`（~575KB，只有產業別/產業鏈 tab 要用）移出首屏改 lazy；boot 的 5 個串行 await 改 `Promise.all`。首屏 JSON 從 ~1MB 降到解壓約 443KB（gzip 約 88KB；2026-09-06 實測更正，原寫「~150KB」）。lazy 載入統一走 `lazyJson()`（in-flight 去重 + `FAILED` 標記，避免 `currentSectors` 的 `.then(render)` 在載入失敗時無限重試）。 |
+| **自訂區間下載** | `runCustomRange` 原本逐日 `await`（65 天＝65 個序列 RTT、~17MB）→ 改 `fetchDailyMany` 6 條並行（實測 peak in-flight 6 vs 1）。 |
+| **sessionStorage** | 原本存**展開後**的物件（698KB/日，65 天要 44MB）→ 遠超 5MB 配額，`setItem` 幾乎必然丟例外被靜靜吃掉，且每次 miss 白做一次 698KB `JSON.stringify`。改存**壓縮原格式**（256KB/日），讀取時才展開；舊格式讀到會自動丟棄重抓。 |
+| **argv 清理** | `budget`/`foreign_flows`/`sectors`/`run_daily` 的 `main` 改 `main(argv=None)`，移除 `run_daily` 裡三處 `sys.argv` 竄改；共用的重算流程抽成 `run_daily.rebuild_products()`（`verify_daily` 重抓後也呼叫它）。 |
+| **requirements.txt** | 移除開頭的 UTF-8 BOM。 |
+
+**已量測、確認不必優化**：後端運算不是瓶頸——`load_daily` 2.5s、`aggregate` 0.3~0.8s/窗、`budget.main` 4.0s、`sectors.main` 3.6s。`budget` 與 `sectors` 各自重跑一次 load+5 窗（多花約 5s），相對 30 分鐘的 job 無意義，別為此增加耦合。
+- **近期重要修正/功能**（細節見下方各段）：
+  - **交易日判定跨午夜滾錯（2026-08-01 修）**：`run_daily.py` 原本 `d = args.date or
+    datetime.now(TPE).date()`，GitHub Actions 延遲跨午夜啟動時目標日滾成隔天，去抓還沒開盤
+    的交易日 → 誤標 `no_data`。現場：status.json 寫 `{"date":"2026-08-01","status":"no_data"}`
+    但同檔 `sources` 四項都是 `2026-07-31`（資料是好的，狀態卻報無資料，前端右上角顯示
+    「尚未開盤/非交易日」）。改用 `target_trading_day()`：`hour < 12` 時回推一天，
+    與 postmkt `build_summary.py` 的 `slot_trading_day()` 同一套（該處 2026-07-17 已修，
+    本 repo 是漏網的）。回歸測試 `tests/test_trading_day.py`（10 個邊界，免 token 免網路）。
+    **2026-09-06 已修「靜默吞掉」問題**：原 `daily.yml` 把 `no_data` 與 `ok` 同等看待且從不失敗，
+    真交易日缺料會被靜默吞掉。現在 `run_daily.classify_no_data(target_day, now_tpe, calendar)`
+    三分：週末→`no_data`（exit 0）、平日台北 20:00 發布截止前→`waiting`（exit 0，不重試）、
+    平日過截止仍無資料→`missing`（exit 1；`daily.yml` 重試 3 次，用盡後**先 Commit & push 把 `status.json` 推上 main、再由「Fail on missing」步驟讓 job 失敗**觸發 notify-failure——順序不可反，否則前端「資料缺漏」與 verify 補回路徑永遠讀不到 missing）。
+    **國定假日（2026-09-28 起接家族行事曆）**：`src/twse_holidays.py` 讀 taiwan-flow-live-v2 的
+    `data/twse_holidays.json`（raw main，逾時 10 秒；規格正本 `taiwan-flow-live-v2/docs/holiday-calendar.md`），
+    `classify_no_data(..., holidays)` 對假日回 `no_data`（exit 0、不重試、不開 issue），note 寫「非交易日（國定假日：<名稱>）」；
+    `status.json` 欄位與形狀不變。**fail-open**：行事曆 404／逾時／壞檔／目標年度不在 `years` → 退回只排週末，
+    此時平日國定假日仍會被判 `missing` 誤報一次（同改動前；note 會註明「行事曆未涵蓋此日」）。
+    `meta.calendar` 已成功抓過的日子優先於行事曆（一定是交易日）。颱風臨時停市 TWSE 事後才補，當天仍可能誤報。
+    `target_trading_day()` 刻意**不跳**假日（回的是觸發當晚的日曆日，假日交給 classify 判 no_data；理由見其 docstring）。
+    `verify_daily` 對 `missing`／`waiting`／`error` 都依行事曆重新分類：目標日為假日 → 不重跑 pipeline、不判 critical、
+    exit 0，並把 status 更正為 `no_data`。測試 `tests/test_holidays.py`（假日集合由測試自給、免網路）；
+    `tests/conftest.py` 把預設抓取換成立即失敗，既有測試一律走 fail-open 路徑。
+    `verify_daily` 改驗 `status.json.expected_date`（原取 `data/daily/` 末檔名，當天沒產檔時會回頭
+    驗昨天並回 ok、把失敗日漂綠），`missing` 時重跑 pipeline 補回、仍失敗 severity=critical、exit 2
+    且 `verify.yml` 亮紅；`healthcheck.check()` 加列數健全性（近 20 檔中位數 80%→warn、50%→critical）。
+    「非交易日 400 優雅化」（`fm_get` 把 400 視為無資料）仍未動，與此無關。
+  - `budget.py` 乖離率**除以零防護**（長期未成交股 MA=0 會崩 → 連帶 latest.json/foreign_flows 整串沒更新；已修，是「資料源日期領先資料日」事故的根因）。
+  - `daily.yml` push 改 **pull --rebase + 重試 5 次 + fetch-depth:0**（原直接 push 會被前端等新 commit 拒絕）。
+  - Excel：**auto-fit 自動欄寬**（消除 #######）、四張並排表字體 11、可選**匯出基準日**、各表標**資料源日期**、ETF市值表移投信/自營佔比。
+  - 前端：三大法人卡/台指期卡/ETF概況**可開合**（localStorage）、表格**響應式高度**、各卡/tab**資料源日期徽章**（偵測落後）、右上角改顯示**更新時間**、網頁**「🔄 更新資料」鈕**（PAT 觸發 workflow_dispatch；2026-10-01 起 PAT 改存瀏覽器密碼管理器）。
+  - **ETF 佔比語意**：市值排行＝持股市值/總市值（外資準、投信/自營對ETF無來源顯「—」、自營佔比欄已移除）；成交金額排行＝成交量參與率(買+賣張)/(2×成交張)。
+- **FinMind 現況**：Sponsor **已續約/恢復正常**（2026-06-28，產業鏈等 Sponsor 級資料集可正常抓）。`TaiwanStockPrice` 對**非交易日**（如週末）查詢會回 **HTTP 400 → fm_get 回 None → 報 error**，所以週末手動觸發更新會變紅（屬正常、非 bug）。
+- **⚠ 2026-06-26 daily 價格事故（已修）**：6/26 排程跑時 FinMind `TaiwanStockPrice` 尚未更新完成，**922/2687 檔（高價權值股居多，如 2330 存 227 vs 正確 2340）價格被寫成暫定/舊值**，但法人張數正確 → 衍生金額/成交值/市值/Excel/類股資金流全錯。**偵測**：daily.close 與權威 `TaiwanStockPrice` 逐檔比對；**補救**：`python src/pipeline.py --date 2026-06-26` 重抓（現已正確）→ 重跑 budget/sectors。已對全期間掃描：僅 6/26 中招、已修，其餘全相符。
+  - **教訓的正確實作（2026-07-25 修正）**：`src/healthcheck.py` 提供純函式 `check()`，但**不能在 run_daily 裡跑**——它的權威源就是 pipeline 剛用過的同一個 API，同一次排程內比對必然相同、severity 恆為 ok（等於沒檢查）。改由 `verify.yml`（23:40 台北）跑 `src/verify_daily.py`：延後數小時後 FinMind 通常已 settle，此時比對才有鑑別力、重抓也才真的修得好，所以**預設就會 `--fix`**（不像原本只印建議），修好後自動 `rebuild_products()` 重算 latest/ranges/foreign/sectors 並 commit。仍 critical 時 job 亮紅通知。前端讀 `status.json.healthcheck.severity`（`pending`＝當天還沒經過獨立驗證／`ok`/`warn`/`critical`）。
+- **待辦/暫緩**：
+  - 非交易日手動觸發優雅化（`fm_get` 把 400 視為無資料→no_data，避免紅）——使用者請暫緩。
+  - ETF 投信/自營持股無絕對來源（已顯「—」）。
+  - 讓同事免密碼更新：三方案（Cloudflare Worker 代理／限定版 fine-grained token／GitHub Issue 觸發），尚未實作。
+
+## 環境
+
+```bash
+python -m venv venv
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt    # requests, pandas
+```
+- **`.env`**：放 `FINMIND_TOKEN`（FinMind Sponsor）。**不進 git**，換環境要自己帶。
+- 終端 cp950 會把中文顯示成亂碼，但 UTF-8 檔案本身正常；驗證時用 `io.TextIOWrapper(sys.stdout.buffer,encoding='utf-8')`。
+
+## 資料流與指令
+
+```
+FinMind(逐檔+期貨) + 證交所BFI82U(上市三大法人) + 櫃買TPEx(上櫃三大法人)
+        ↓ src/pipeline.py（單日）/ backfill*.py（回補）
+data/daily/*.json、futures/*.json、totals.json、meta.json
+        ↓ src/budget.py
+data/latest.json（單日）、latest_ranges.json（近5/10/20/65日）
+        ↓ index.html（vanilla JS，讀 JSON）
+GitHub Pages
+```
+
+| 指令 | 說明 |
+|------|------|
+| `python src/build_meta.py` | 產 meta.json（代號↔名稱、is_etf、issued_lots from baseline） |
+| `python src/pipeline.py --date YYYY-MM-DD` | 跑單日：daily + futures + totals |
+| `python src/backfill.py --days 65` | 回補逐檔 daily（升序，庫存鏈才正確） |
+| `python src/backfill_market.py` | 回補 futures + totals（讀 meta.calendar） |
+| `python src/budget.py` | 重算 latest.json + latest_ranges.json |
+| `python src/foreign_backfill.py` | 一次性回補上櫃外資逐日（TPEx Daily）→ data/_otc_daily.json（2024→2026-03，已跑完 525 天） |
+| `python src/foreign_flows.py` | 重算 foreign_history.json（外資買賣超 tab：FinMind 上市 + _otc_daily/totals 上櫃，月/年聚合） |
+| `python src/rebuild_daily.py` | daily schema 變更後重抓歷史（如新增 f/t/d buy/sell 欄；升序保庫存鏈） |
+| `python src/sectors.py --build-chain` | (重)抓產業鏈 → `data/industry_chain.json`（snapshot，變動慢、偶爾跑） |
+| `python src/sectors.py` | 類股資金流：讀 daily+meta+chain → `sector_latest.json`/`sector_ranges.json` |
+| `python src/healthcheck.py [--date D] [--fix]` | daily.close vs 權威源逐檔比對；`--fix` 在 critical 時重抓該日 pipeline |
+| `python src/run_daily.py` | 每日排程入口：pipeline + budget + foreign_flows + **sectors** + status.json（daily.yml 用）。**不含健檢**（見上） |
+| `python src/sentiment.py [--date D] [--backfill N] [--dry-run]` | 市場情緒指標 → `data/sentiment.json`（run_daily ok 路徑末尾自動呼叫；手動補跑／單日覆寫用，見「市場情緒指標」節） |
+| `python src/verify_daily.py [--date D] [--no-fix]` | **延後驗證班入口**（verify.yml 用）：健檢 → critical 就重抓 → 重算衍生產出 → 寫 status.json.healthcheck |
+| `python tests/parity.py [--n 1 5 10 20 65]` | 前端(index.html) ↔ 後端(budget/sectors) 聚合口徑逐檔比對（免 token、免網路） |
+
+每日排程 `.github/workflows/daily.yml`：**13:19 UTC（21:19 台北）**週一~五 + 手動 dispatch。Secret：`FINMIND_TOKEN`。（原 17:30 太早、法人/持股未齊；2026-06 改 21:00；2026-07-14 改 21:19——外資持股官方 21:00 才更新，21:00 整起跑會踩到未更新資料。）
+
+## 資料來源與口徑（重要，踩過的雷）
+
+- **全市場單日查詢用 `start_date`=`end_date`**，不是 `date=`（FinMind `date=` 回 400）。
+- **逐檔法人** `TaiwanStockInstitutionalInvestorsBuySell`（長格式，buy/sell 單位**股**÷1000=張）：
+  外資=`Foreign_Investor`+`Foreign_Dealer_Self`、投信=`Investment_Trust`、自營=`Dealer_self`+`Dealer_Hedging`(+`Dealer`)。已驗證與證交所 T86 完全一致。
+  daily schema 除 net 外**已存 f/t/d 的 buy/sell 分欄**（由 `src/rebuild_daily.py` 升序回補），見下方 daily schema 行。
+  （2026-07-26 更正：原寫「只存 net，無逐檔買/賣分項」，與 `data/daily/20260724.json` 實際 cols 不符。）
+- **買賣超金額**（逐檔無原生金額欄）= `net張 × 收盤價`（千元），已用規格 sample 與 T86 驗證。
+- **股價** `TaiwanStockPrice`：`Trading_Volume`(股÷1000=張)、`Trading_money`(元÷1000=千元)、`spread`=漲跌價，chg_pct=spread/(close−spread)×100。
+- **外資持股** `TaiwanStockShareholding`：`ForeignInvestmentShares`(÷1000)、`ForeignInvestmentSharesRatio`(%)。**`NumberOfSharesIssued` 是發行股數**（現值）。
+- **投信庫存累計**：`inv(t)=max(0, inv(t-1)+t_net)`，種子來自 `baseline_20260430.json`；≤2026-04-30 為 null。backfill **必須升序**處理。
+- **發行張數 issued_lots**：優先用 `TaiwanStockShareholding.NumberOfSharesIssued`（現值，pipeline 每日更新；補上 baseline 後新上市標的如主動式 ETF），baseline 為備援。約 591 檔（多為無外資持股申報的債券 ETF/冷門股）兩者皆無 → issued_lots=None → 市值算不出。
+- **市場三大法人卡**（`totals.json`）：**上市**=證交所 `BFI82U`（`https://www.twse.com.tw/rwd/zh/fund/BFI82U?dayDate=YYYYMMDD&type=day&response=json`），**上櫃**=櫃買 `https://www.tpex.org.tw/www/zh-tw/insti/summary?type=Daily&date=YYYY/MM/DD&response=json`（用「合計」列）。**不用** FinMind 的 `TaiwanStockTotalInstitutionalInvestors`（它在某些日把投信修訂成與官方/自身逐檔不一致的值）。TWSE/TPEx 偶發「線上人數過多」亂 stat 需重試、間隔拉長（6-8s）。TPEx 列名有全形空格前綴、外資列叫「外資及陸資(不含自營商)」。
+- **三大法人合成規則**（中文列名，比對前先 strip 上條說的全形空格）：外資=「外資及陸資(不含外資自營商)」+「外資自營商」、投信=「投信」、自營=「自營商(自行)」+「自營商(避險)」。**TPEx 的外資列名與 TWSE 不同**（少「外資」二字，見上條），硬編同一組列名會漏抓。
+- **上條「某些日不一致」的具體實例**：2026-06-12 `TaiwanStockTotalInstitutionalInvestors` 把投信修訂成 129 億，官方 BFI82U 為 142.3 億——這是改用 BFI82U 的直接原因。
+- **totals.json schema**＝`{dates:[…], rows:{"YYYY-MM-DD":{tse:{f/t/d 各 _buy_k/_sell_k/_net_k + turnover_k}, otc:{同}, taiex:float}}}`（千元）。**後端不存「合計」列**，前端 `computeTot` 自行 tse+otc 相加。
+- **期貨** `TaiwanFuturesInstitutionalInvestors`：外資台指期未平倉淨額 = `long_open_interest_balance_volume − short_...`，金額÷1000。已回補 65 日。
+- **代號正規化**：baseline 代號可能去前導 0（`50`↔canonical `0050`），對齊試原碼與 `lstrip('0')`。
+- **is_etf**：代號 `00` 開頭（**含字母後綴**如 `00631L`、`00400A`，勿用純數字判斷）。**ETF 債券/平衡型判別**：名稱含「債」**或**代號結尾 **B**(被動債)/**D**(主動債)/**T**(平衡)，其餘股票型——FinMind 的 `industry_category` **不區分債券型**，所以只能用這組 heuristic。
+- **meta.json 不可有 NaN**（瀏覽器 `JSON.parse` 會炸）：build_meta 已過濾 NaN issued_lots 為 null；重建 meta 時**保留既有 calendar**（別清掉）。
+
+## 前端（index.html，單一檔，vanilla JS）
+
+- **6 種模式**：單日 / 5 / 10 / 20 / 65日 / 本週 / 上週 / 上月 / 自訂區間。前 5 個讀 latest/latest_ranges（預算好）；本週/上週/上月/自訂走**瀏覽器端逐日 fetch daily + 聚合**（`runCustomRange`，鏡像 budget.py；口徑一致性由 `tests/parity.py` 自動守門，2026-07-25 起零差異）。
+- **首屏只載 5 支小檔**（latest / meta / totals / foreign_history / status，並行；解壓合計約 443KB、gzip 約 88KB，其中 meta.json 270KB 為首屏最大；2026-09-06 實測更正，原寫「4 支」「~150KB」）；latest_ranges、sector_latest、sector_ranges、industry_chain 全部 lazy（`lazyJson()`，有 in-flight 去重與失敗標記）。daily 逐日檔走 `fetchDailyMany` 6 條並行 + `state.dailyCache` + sessionStorage（存壓縮原格式）。
+- **hash 路由（2026-09-07，批次三 #15）**：`#tab=&mode=&d1=&d2=&side=&rank=&etype=&inv=&sec=&sub=`，
+  **只放非預設值**（全預設時網址不留 `#`）。`parseHash()`／`currentHash()`／`syncHash()`／
+  `ensureModeData()`／`applyHashSector()`／`applyHash()`（`index.html:1096`／`:1109`／`:1126`／
+  `:1135`／`:1154`／`:1173`）。`render()` 拆成 `render(){ renderMain(); syncHash(); }`（`:1004`）；外框（分頁／模式 active＋資料日列）抽成 `renderChrome()`（`:1009`），供 `applyHash` 早退時只補外框不動 `#main`
+  ——原本的內容改叫 `renderMain()`，因為它有 5 處早退，寫回不能直接接在尾巴。載入時由 `boot()`
+  結尾 `if(location.hash) await applyHash(); else render();`（`:339`）套用；外部改網址／貼連結／
+  返回鍵走 `hashchange`（`:1202`）。**寫出一律 `history.replaceState`（不塞歷史、不觸發
+  hashchange）**——實測切 tab／改 mode／drill 兩層 `history.length` 皆不變。
+  - **key 語意**：`tab`＝8 個 `data-tab` 值；`mode`＝10 個 `data-mode` 值；`d1`／`d2`＝**只有
+    `mode=custom` 且真的查詢過**才寫（`state.customMeta.kind==="custom"`），本週/上週/上月的起訖
+    由 mode 本身決定、刻意不寫（寫了會在資料日推進後與 mode 互相矛盾）；`side`／`rank`／`etype`
+    ＝各 tab 的 seg（`etype` 對到 `state.sub.etf.type`）；`inv`＝法人別；`sec`＝展開的類股；
+    `sub`＝`chain` 第二層次產業。**只輸出當前 tab 用得到的鍵**。
+  - **白名單規則**（表在 `HASH_SEG`／`:1086`；tab、mode 清單直接從 DOM 取，增刪分頁不會脫節）：
+    整段 >1600 字元或單值 >512 字元即丟棄；key 須符合 `^[a-z0-9]{1,6}$`；`decodeURIComponent`
+    包 try/catch（壞的 `%zz` 只丟該鍵、不炸）；`d1`／`d2` 須 `YYYY-MM-DD`、`d1<=d2` 且與
+    `meta.calendar` 有交集（實際夾到交易日與 65 天上限仍由 `runCustomRange` 做，所以 hash 的
+    逐日 fetch 成本上限與手動點選相同）；`sec` 須出現在該窗 `classifications` 的類股清單裡、
+    `sub` 須是 `industry_chain.json` 裡該產業底下真實存在的 (產業,次產業) 配對——**解出來的字串
+    只拿去比對既有清單，比對不到就丟棄，永遠不會被拼進 `innerHTML`**。非法值一律靜默退回預設。
+  - `runCustomRange` 多一個 `noRender` 參數並回傳 bool（`false`＝提早退出、畫面已有訊息，
+    呼叫端不要再 render 蓋掉）；mode 鈕與 `applyHash` 共用 `ensureModeData()` 這條載入路徑。
+- **四站同步函式 `loadSiteVer()`＋footer `#siteVer`**（`loadSiteVer()` 在 `index.html:1736`、footer `#siteVer` 在 `:254`；2026-09-07 全檔行號主張逐一重量）：postmkt／taiwan-flow-live-v2／taiwan-flows／taiwan-stock-news 四站都有（入口站沒有），**同步但非逐字**——本站 sessionStorage key `tf_site_ver`、時間走內嵌 `toLocaleString("sv-SE")`（postmkt 走 `fmtGenTaipei`），各站打自己 repo 的 `api.github.com/repos/shihpc/<repo>/commits/main`（免金鑰、限 60 req/hr/IP，失敗一律靜默隱藏版本列）。改行為四站一起改，但不強求逐字；清單正本在 `postmkt/CLAUDE.md`「不可破壞的約定」第 2 條。
+- **區間聚合口徑**（規格 4.1）：流量(買賣超)整段加總；存量(持股/比率/乖離)取末日值；漲跌%對 d1 前一交易日；佔成交量=Σnet÷Σvol；乖離=收盤對 MA20。
+- **header 由上到下**：標題「外資投信ETF進出」(26px) + 更新時間(10px) → 9 模式鈕 → 資料日/區間 → 三大法人卡 → 台指期卡 → 5 tab。
+- **三大法人卡**：上市/上櫃/合計 鈕 + 日/週/月 鈕 + 下拉選期；每法人顯示買/賣/淨。
+- **台指期卡**：外資未平倉口數/金額 + 比較日下拉（單日前一日/5/10/20/65日前/本週一/上週五/上月底/自訂首日），顯示比較日 OI 與增減。
+- **表格**：固定 ~5 列捲動框（max-height 202px，可拉看 30 筆）、**每欄點標題排序**(▲▼)；代號欄固定 62px、名稱欄 left:62px 對齊（凍結兩欄）；億元統一小數一位含千分位；紅漲綠跌（漲跌% 與買賣超正負）；代號連 Yahoo 股市。
+- **投信/外資進出頁**排行鈕：依金額 / 依持股變動率 / 佔成交量（三者皆與買超/賣超連動）。
+- 注意：`bindSegs()` 只綁 `.seg[data-seg]`（卡片的日/週/月、上市櫃等 seg 無 data-seg，自行綁 onclick，勿被覆蓋）。
+
+## CSP 與注入面（2026-09-06）
+
+`index.html` 頂端有 `<meta http-equiv="Content-Security-Policy">`（`index.html:10`，比照
+`postmkt/index.html:10` 寫法）。加 CSP 前逐項盤點的注入面如下（**盤點結果，不是待辦**；
+使用者裁定不為 CSP 重構程式）：
+
+| 項目 | 現況 | 對 CSP 的意義 |
+|------|------|---------------|
+| inline `<script>` | **1 塊**（整站 JS 內嵌，`<script>`…`</script>` 一組） | 需 `script-src 'unsafe-inline'` |
+| inline 事件處理器（`onclick=` 等 HTML 屬性） | **0 處**（全部在 JS 內以 `.onclick=`／delegated `addEventListener` 綁定） | 無額外需求 |
+| inline `<style>`＋元素 `style=""` 屬性 | 整站 CSS 內嵌；`.sectlink`／`.subsectlink` 等以 `style=` 屬性拼字串 | 需 `style-src 'unsafe-inline'` |
+| 外連 script | `https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js`（`EXCELJS_URL`，`ensureExcelJS()` 按需插入） | `script-src` 白名單 cdnjs |
+| 外連 fetch | `https://api.github.com/repos/shihpc/taiwan-flows/commits/main`（`loadSiteVer()`）＋ `…/actions/workflows/daily.yml/dispatches`（`triggerUpdate()`，POST） | `connect-src` 白名單 api.github.com |
+| 站內 fetch | `data/*.json`、`data/daily/*.json`（全部同源） | `connect-src 'self'` |
+| 外連 `<a href>` | `https://tw.stock.yahoo.com/quote/<code>`（`yahoo()`，`target=_blank rel=noopener`） | 導航不受 default-src 管，無需列 |
+| Excel 下載 | `URL.createObjectURL(blob)` → `<a download>`（`buildExcel`） | `blob:` 走 `<a download>` 導航，不受 default-src 管 |
+| 圖片／字型／iframe／object | 無 `<img>`、無外部字型、無 iframe | `img-src 'self' data:`、`object-src 'none'` 純收緊 |
+| `eval`／`new Function`／`javascript:` URL／`document.write` | **0 處** | 不需 `'unsafe-eval'` |
+| `innerHTML` 拼字串 | **18 處**；**格式器層已 `esc()`＋管線消毒（2026-09-06）**：前端 `esc()`（`index.html:412`，逃 `&<>"'`）套在 `COL_NAME`（`:462`）、`.sectlink`／`.subsectlink` 格式器（`:651`、`:688`）、類股／次產業明細標題（`:686`、`:702`、`:745`）與 `updateDateLabel` 的狀態 `title=`（`:862`）——`r.name`／`r.sector`／`r.sub` 全部經此進 DOM；`data-sector`／`data-sub` 屬性走 `encodeURIComponent`。管線端 `src/sanitize.py` `sanitize_label()` 去 `<>"'`＋控制字元、截 40 字，套在 `build_meta.py` 寫 name／industry、`sectors.py --build-chain` 寫產業／次產業、`budget.py aggregate` 寫 latest name／industry 三處（**`&` 刻意保留**：14 檔 `S&P` ETF 與產業鏈「MR Headset & SG」是真實名稱，實查 `tests/test_sanitize.py` 守現行資料零變動）。`cellText()` 仍以 detached div 的 innerHTML 抽純文字做排序，`esc()` 後 `textContent` 還原為原字串、排序不受影響（Playwright 實測名稱／數值欄升降冪皆正確） | 信任邊界原為「repo 內容」，但股名／產業名實際來自 FinMind（`build_meta.py:93`），`'unsafe-inline'` 之下 CSP 擋不住這條路，故補前端逃逸＋管線消毒兩道；Playwright 以 `<img onerror>` 股名／產業名注入 8 tab 實測 `window.__xss` 未觸發、畫面顯示字面文字 |
+| localStorage 內容 | **金鑰 2026-10-01 起不再存 localStorage**（舊 `tf_gh_token` 等四把舊 key 載入即無條件刪除，搬移提示卡已於 2026-10-18 移除，見「網頁手動更新鍵」）、`tf_cards`（JSON.parse 後只取布林）、sessionStorage `tf_site_ver`／`d:<date>`／`tf_daily_idx`（全部 try/catch＋只當資料用） | 不進 innerHTML |
+
+`base-uri 'none'`：頁面無 `<base>`，也不會需要。**新增資料源／CDN 時要同步改 `connect-src`／`script-src`**，
+否則瀏覽器只在 console 印 `Refused to connect/load`、畫面上是靜默失敗（`jsonOrNull` 會把它吞成 null）。
+驗證方式：Playwright 逐 tab 點擊＋匯出 Excel＋更新資料，console 不得出現 `Refused to`（2026-09-06 實測零違規）。
+
+## 外資買賣超 tab（市場別月/年歷史，2026-06 新增）
+
+- **資料**：`data/foreign_history.json`＝`{latest_date, monthly:{"YYYY-MM":{tse:{buy_k,sell_k,net_k},otc:{...}|null}}, daily:{近30交易日}}`（千元）。年總/本週/上週/近5日由前端 `renderForeignFlows()` 聚合，合計＝tse+otc，OTC佔比＝OTC總量÷合計總量。
+- **資料源決策（重要）**：**棄用 CMoney 附件**——附件 2026 月值與官方 TWSE 差 ~3 倍且 net 正負相反（附件像更早年份的真實規模；本資料集 2026 市場本身放大 ~2.3×；另附件年份標籤 **+1 錯置**、gross buy/sell 偶有同額偏移但 net 可抵銷）。改用**官方**：上市＝FinMind `TaiwanStockTotalInstitutionalInvestors`（外資＝Foreign_Investor+Foreign_Dealer_Self，源自證交所；淨額與官方 BFI82U 65 天僅 2 天差、最大 21 億；近 65 天再用 totals.json 官方覆蓋）；上櫃＝TPEx Daily 逐日回補（`_otc_daily.json`，2024-01→2026-03 共 525 天）+ totals.json 近期。**TWSE BFI82U 只支援 type=day**（month 回 HTML、year 回無資料）；**TPEx type=Monthly 忽略 date 只回當月**——所以歷史只能逐日。OTC佔比 13-18%，與附件歷史一致（方法學交叉驗證）。
+- **前端**：tab=`foreignflows`，獨立歷史表（凍結「期間」欄 `.flbl` 118px、年列 `.yrow`、分節列 `.srow`），不吃 mode/區間。當月列標「N月（截至 MM/DD）」。Excel 多一張「外資買賣超」工作表（A3 橫向，`xlSheet(wb,name,{a3:true,land:true})`）。
+
+## 類股資金流（2026-06-28 新增，後端＋前端完成）
+
+- **目的**：在現有逐檔法人買賣超上加「分類維度」，看資金流向哪類股。兩種分類法 × 四法人別。
+- **前端**：index.html 新增 tab `exch`（產業別資金流）/`chain`（產業鏈資金流）。法人別 seg（預設 total）+ 類股排序表（依買賣超金額、可點欄位排序）+ **點類股展開成分股明細**（`.sectlink` 走 document 級 delegated click 撐過重繪、`#sectDetail` scrollIntoView）。讀 `sector_latest_lite.json`(單日)/`sector_ranges_lite.json`(r5/10/20/65)——見下方「雙格式與 `SECTOR_SOURCE`」。chain 頁標多對多/非市佔/不含 ETF + 涵蓋徽章。
+- **custom/本週/本月/上週/上月**：`runCustomRange` 算好逐檔 agg 後呼叫 `jPageSectors(agg, chainMap)` 即時建類股 view 存 `state.customSectors`（鏡像後端 `build_view`）；`currentSectors()` 這些模式回 customSectors。需 `ensureChainMap()`（載 `industry_chain.json` 的 `map`）。
+- **產業鏈第二層 drill**：chain 頁 產業→**次產業**→成分股。`industry_chain.json` 的 `map[code].p` 存 `(產業,次產業)` 配對（`--build-chain` 產生）；`chainSubLevel()` 用配對把某產業的成分股歸到各次產業、再點次產業列出個股（`.subsectlink` delegated click，`state.sub.chain.opensub`）。展開時上層摘要表壓到 190px 讓深層露出、scrollIntoView。
+- 已驗證：exch/chain 排序、兩層 drill、1d/r5/上週、法人別切換、無 console error。例：半導體→IC封測(+116.5億)→旺宏/日月光/南茂/力成。
+- **分類法**：`exchange`（交易所產業別，來自 `meta.stocks[code].industry`，**互斥可加總**）/ `chain`（產業鏈 `industry`，來自 `industry_chain.json`，**多對多**）。
+- **法人別**：`total`（=f+t+d）/ `foreign` / `trust` / `dealer`。
+- **`src/sectors.py`**：**重用 `budget.load_daily`+`budget.aggregate`**（不重抓、不重算流量，口徑同專案：張＋千元）；逐檔歸戶後輸出四份（full＋lite，見下條）。結構：`classifications.{exchange|chain}.investors.{total|foreign|trust|dealer}=[{sector,net_amt_k,net_lots,n,n_buy,n_sell}]` + `stocks:[逐檔流量列含 exch/chain 標籤]`（前端點類股→filter stocks 排序個股）。
+- **`industry_chain.json`**：`--build-chain` 產出，`map: code→{i:[產業],s:[次產業]}`（2339 檔/47 產業/258KB）。變動慢，不進每日排程、偶爾手動重抓即可。
+- **口徑雷（前端徽章務必標）**：
+  - chain **多對多**：一檔掛多節點（平均 1.65、最多 21），各節點加總**會重疊、≠大盤、不可讀成市佔**（主題曝險）。**歸戶時要對「產業」去重**（一檔在同產業底下有多個次產業時，勿因 sub_industry 重複計入該產業——否則半導體會從 ~−795 億膨脹成 ~−2700 億）。
+  - chain 僅含產業鏈有分類個股（~1940/2328），**不含 ETF/權證**（與 ETF 頁口徑不同）。
+- **雙格式與回退開關 `SECTOR_SOURCE`（2026-09-07，批次三 #17 瘦身）**：
+  - **跨站消費者（2026-09-28 起）**：postmkt「籌碼雷達」tab 以同源相對路徑 `../taiwan-flows/data/sector_ranges_lite.json`
+    讀 `windows.r5`／`r20` 的 `classifications`（`sector`／`net_amt_k`／`n`）、`trading_days`、`start`／`end` 與頂層 `date`；
+    這些欄位改名、改語意或檔案搬家＝跨站變更。
+  - **後端一次產四份**（`src/sectors.py main()`）：**full**＝`sector_latest.json`(566KB)／`sector_ranges.json`(2.5MB)，格式與舊版**完全相同**（含 `stocks`）；**lite**＝`sector_latest_lite.json`(35KB)／`sector_ranges_lite.json`(143KB)，**只有 `classifications`** ＋窗 meta（`dates`／`stocks_n`／`trading_days`／`start`／`end`）。lite 由純函式 `sectors.lite_view(view, dates)`（`src/sectors.py:195`）從**同一個** `build_view` 結果切出、`classifications` 沿用同一物件不重算，因此與 full 逐位相同（`tests/test_sectors_lite.py` 對現行 `data/` 產出實測守門）。
+  - **前端開關**：`const SECTOR_SOURCE="lite"`（`index.html:354`）→ `SECT_LATEST_URL`／`SECT_RANGES_URL`（`:355-356`）決定 `ensureSectorLatest`／`ensureSectorRanges`／`currentSectors` 的 FAILED 短路要看哪支 URL。**回退＝把這個常數改回 `"full"`，其餘一行都不用動**（lite 檔壞掉或缺檔時也是這樣救）。
+    **注意回退的是資料源、不是整包改動**：同批做的 `round(o.net_lots,1)`＋次鍵 tie-break 修正會一併保留，
+    因此回退後 chain 次產業「張數」欄有 3 格會與 `2026-09-07 之前的 origin/main` 差 1 張（2026-09-07 驗收實測：
+    `chain/r5 IC通路`、`chain/r20 記憶體IC`、`chain/本週 IC封裝測試`）——**新值才是對的**（每列都是 0.1 倍數，
+    先 round 再加總才還原真值）。舊版另有「同一個窗、同一格兩個數字」的既有 bug（週一時 `chain/1d` 與
+    `chain/本週` 同窗卻顯示 46,107 / 46,106），本批一併修掉。看到這 3 格差 1 不要當成瘦身造成的漂移。
+  - **drill-down 改前端即時聚合**：lite 沒有 `stocks`，點類股時由 `sectorStocks()`／`buildSectorStocks()`（`index.html:593`、`:604`）用該窗的 `dates` 走既有的 `fetchDailyMany`＋`aggregateRange`＋`jPageSectors` 重建同一份逐檔表（就是 `runCustomRange` 那條路徑，口徑由 `tests/parity.py` 守門）；結果快取在 `SECT_STOCKS[mode]`，daily 逐日檔沿用 `state.dailyCache`＋sessionStorage LRU（與自訂區間共用）。`sectorDetail`／`chainSubLevel` 的第一個參數已由 view 改成 **stocks 陣列**。
+  - **`ma20dates` 刻意傳空陣列**：`jPageSectors` 的逐檔列不含 `bias20`，MA20 取樣影響不到任何欄位；傳真的 20 天只會讓 1d/r5 的 drill-down 白抓 20 個 daily 檔。
+  - **體感取捨**：彙總表（進 tab 就看得到的那張）變快很多——單日 579KB→36KB、r20 2.57MB→146KB（Playwright 實測傳輸 bytes，未壓縮）；代價是**第一次點某個類股**要下載該窗的 daily 逐日檔（1d 2 檔、r5 6 檔、r20 21 檔、r65 66 檔，每檔約 250KB），期間 `#sectDetail` 顯示「載入成分股 i/n …」，同窗之後的展開都命中快取。
+  - **踩到的坑（同批修）**：`chainSubLevel` 的次產業加總原本沒有在加總後 `round(...,1)`，也沒有排序次鍵。逐檔表的走訪順序在兩條路徑不同（full 檔沿用後端 `meta.stocks` 序、lite 即時聚合是 JS 物件鍵序），浮點加總不可交換 → 總和差 1e-9，經 `fmtLot` 的 `Math.round` 放大成**張數差 1**（實測 chain/1d「IC封裝測試」46,106 vs 46,107）。現已加 `round(o.net_lots,1)`＋次鍵 `sub`；`sectorDetail` 與次產業成分股表也補了次鍵 `code`（金額同值時排名才穩定）。這與「改聚合邏輯時四捨五入一律 `jround`、排序一律帶次鍵」是同一條教訓。
+- **size**（2026-09-07 實測 byte 數）：full 的 `sector_ranges.json` 2,568,707B，lite 146,150B——逐檔 `stocks` 表（×5 窗）佔全檔 **94.3%**（`sector_latest` 為 93.9%），換句話說 lite 只有 full 的 5.7%。**full 目前仍照產照 commit**（雙格式並存、供回退）；若要拿走 git 增量成本，下一步是讓 full 不落 git（`.gitignore`），前端已經不讀它了。
+
+## 市場情緒指標 `data/sentiment.json`（2026-09-29 新增，後端；前端在 postmkt）
+
+規格正本＝`docs/sentiment-tab.md`（§0 口徑、§1 M1–M3、§2 後端）。**純描述性顯示**（鐵律 8）：只算數、不下判斷、
+不進任何排序或訊號。**本 repo `index.html` 零改動**——畫面在 **postmkt「市場情緒」tab**。
+
+- **跨站消費者**：postmkt 以同源相對路徑 `../taiwan-flows/data/sentiment.json` 讀本檔（CSP `connect-src 'self'` 涵蓋）。
+  **schema／欄位名／語意／路徑改動＝跨站變更**，先改 postmkt 前端。樣本 `tests/fixtures/sentiment_sample.json`
+  （fixture 算出、非線上資料；`tests/test_sentiment.py` 守它與本模組算式一致）可供前端測試對照。
+- **程式**：`src/sentiment.py`。純函式 `vix_close`／`pc_ratios`／`retail_ratio`（＋`mtx_open_interest`）回傳比值與中間值；
+  `compute_day(date, fetch)` 打 4 個 FinMind 請求（`TaiwanOptionVix`、`TaiwanOptionDaily` TXO、`TaiwanFuturesDaily` MTX、
+  `TaiwanFuturesInstitutionalInvestors` MTX）；`update(calendar)` 讀既有檔、補 `meta.calendar` 中 ≥`SENTIMENT_START`
+  （`2026-03-02`，TaiwanOptionVix 歷史起點）的缺漏交易日，**逐日升序、每班最多 `SENTIMENT_MAX_BACKFILL`＝20 天**，
+  `rows` 依日期升序、同日覆寫不重複。
+  - 本班計畫（`plan_dates`）：①最新交易日一律重算（晚到資料由此補上）②最近 `SENTIMENT_REFRESH_DAYS`（3）個交易日
+    有 null 關鍵欄者重算 ③其餘缺漏由最舊補起——**`cv` 缺或 <`SENTIMENT_CALC_VER`（2）的既有列也要重算，但排在真缺漏日之後**
+    （兩組各自由舊到新），仍受 20 天上限與 300 秒預算約束（計算規則改版的歷史重算，見下條 §0b）。**行事曆讀不到（fail-open 只排週末）那班算出的列記 `cv=1`**（休市順延的到期日可能判錯），下一班讀得到行事曆時自動重算成 2（2026-09-30 驗收建議）。`plan_dates` 讓**真缺漏日優先於 cv 過期列**，行事曆長期讀不到時回補仍會推進、不被同一批舊列卡住（代價：還有真缺漏日時 cv 過期列一列都不重算，缺漏補完後才每班重算最舊的約 19 列；行事曆讀得到後才逐班全數更正成 2）。
+    **首輪代價（2026-09-30 驗收實測推估）**：main 上既有 20 列無 `cv` 的舊規則列會延到回補尾端（約第 7～8 班）才更正；
+    最新交易日屬 ① 每班必重算，不受此延遲。首次上線約 7–8 班補完（2026-09-29 `meta.calendar` 實查 ≥03-02 共 136 個交易日；每班約 19 天新補＋最新日）。
+  - 口徑（逐項照 §0，**不要自行改**）：VIX＝當日最後一筆；P/C 未平倉比只取 `trading_session=="position"`；
+    P/C 成交量比＝`position`＋`after_market` 合計；散戶淨部位＝三大法人小台空單合計－多單合計；
+    散戶多空比＝散戶淨部位 ÷ 全市場未平倉（`position` 時段 OI 加總）。比值存**百分比兩位小數**，
+    一律 `budget.jround`（JS `Math.round` half-up，**不可用 Python `round`**）。
+  - **未平倉排除當日到期契約（2026-09-30，規格 §0b）**：`put_oi`／`call_oi`／`pc_oi` 與 `mtx_oi`／`mtx_oi_monthly_only`／
+    `retail_ratio` 不計「到期日＝資料日」的契約（到期結算後已不存在，官方未平倉不含它；run 36678263476 實證 09-29 扣掉
+    `202609F4` 後與期交所逐口相同＝75.30%，未扣為 71.83%）。**成交量欄與法人多空不變**。到期日由純函式
+    `contract_expiry(contract_date, holidays)` 推算：`YYYYMM`＝第 3 個週三、`YYYYMMWn`＝第 n 個週三、`YYYYMMFn`＝第 n 個週五，
+    非交易日（週末或行事曆休市日）順延到下一個交易日；其他形狀（價差 `202610/202611`、空值）回 None＝**不排除**、計數記 log。
+    `expiring_contracts()` 取當日到期集合，`pc_ratios`／`mtx_open_interest`／`retail_ratio` 以 `exclude` 參數收。
+    行事曆＝`src/twse_holidays.py` 的 `load()`，由 `update()` **每班讀一次**（本班無日子要算時不讀）後傳給 `compute_day(d, fetch, holidays)`
+    （`update(holidays=…)` 可注入）。**fail-open 限制**：讀不到行事曆＝只排週末，此時遇國定假日順延的到期日會算錯
+    （例：09-29 會把 `202609F4` 算成 09-25 到期而**不排除**，`pc_oi` 回到 71.83）；log 有 warning。每天 log 一行
+    `未平倉排除當日到期契約 TXO …｜MTX …｜無法解析不排除 …` 列出被排除的契約與口數。小台無官方值可對帳，比照同規則推定。
+    每列帶 **`cv`**（計算版本，本規則＝`SENTIMENT_CALC_VER`＝2；舊列無此鍵視為 1），前端不讀。
+    `tools/diag_pc_oi.py` 有對應候選 `position,exclude_expiring`（同讀行事曆），供線上 ★ 對帳。
+  - **0 筆 vs 請求失敗分開處理**：資料集查詢成功但當日 0 筆 → 該欄 `null`（不整日丟棄）；請求失敗（`fm_get` 回 None／例外）
+    → 該日**不寫入**（仍是「缺」，下一班重試，避免把「沒抓到」寫成 null 而沾黏），繼續下一天；連續
+    `SENTIMENT_MAX_CONSEC_FAIL`（2）天失敗就放棄本班（API 掛掉時不空轉）。已算好的照寫，最後拋 `SentimentFetchError`。
+  - **牆鐘總預算 `SENTIMENT_BUDGET_SEC`＝300 秒（5 分）**：`daily.yml` timeout 55 分、重試迴圈已吃掉大半，情緒指標
+    不可擠壓既有產出的 commit。每算完一天檢查耗時，超過且還有剩餘天數即停止本班——已算的照寫、**不拋錯、不算失敗**，
+    印一行 warning 說明剩餘天數留待下班（下一班由 `plan_dates` 自然補回）。`update()` 的 `clock` 參數可注入供測試。
+    **預算只在天與天之間檢查**，單日最壞≈451 秒（前 3 資料集各 `fm_get` 2 敗 (30+10) 秒＋第 3 次 30 秒內成功≈110 秒，
+    第 4 資料集 3 敗 3×(30+10)＝120 秒），最壞單班≈300＋451＋15（期交所）≈12.8 分；`daily.yml` 最壞總長（兩次失敗＋兩次 sleep 600＋
+    第三次成功＋情緒）≈47.8 分＜55 分 timeout，**不含** checkout／setup-python／pip／push 重試。原設 600 秒時≈52.8 分逼近上限，
+    2026-09-30 驗收後降為 300（皆為依程式碼的推估、未實測；`requests` timeout=30 同時是 connect 與單次 read 逾時，極慢串流理論上無上限）。
+- **schema**（`schema:1`）：`{schema, generated_at(台北 +08:00), start, rows:[{date, vix, pc_oi, pc_vol, put_oi, call_oi,
+  put_vol, call_vol, mtx_oi, mtx_oi_monthly_only, inst_long, inst_short, retail_net, retail_ratio, cv}], check:{taifex_pc:{date,
+  pc_oi, pc_vol, match}}}`。`pc_oi`／`pc_vol`／`retail_ratio` 為百分比（兩位）、`vix` 兩位，其餘為口數整數；任一可為 `null`（`cv` 為整數、2026-09-30 起附加，舊列可能缺）。
+  `check.taifex_pc` 異常時另帶 `note`（`unreachable：…`＝連不到期交所、或「無共同日期」），此時 `date`／`match` 為 `null`。
+- **小台全市場未平倉口徑（2026-10-18 使用者裁定：維持全部契約）**：含週契約（`contract_date` 形如 `202609W5`）。兩種都算：主值
+  `mtx_oi`＝**全部契約**（`MTX_OI_MAIN="all"`，定案、不改），`mtx_oi_monthly_only`＝排除 `contract_date` 含 `W` 者（照存，
+  postmkt 並列「僅供參考」、已拿掉「口徑比對中」徽章）。`retail_ratio` 依主值口徑算。
+  runner log 每天有一行 `sentiment <date>: … MTX 全市場 OI 全部契約=… 僅月契約=…` 供比對。
+  **定案改 `MTX_OI_MAIN` 時要同步改 postmkt 前端寫死的「全部契約」說明文字**（`postmkt/index.html` grep `全部契約`），
+  否則畫面會把月契約口徑的數字標成全部契約。
+- **期交所交叉核對**：`https://openapi.taifex.com.tw/v1/PutCallRatio`（逾時 15 秒）**只作核對、不是主資料源**；取與本檔共同最新日
+  比 `pc_oi`／`pc_vol` 兩位小數。GitHub runner 能否連到**未驗證**；連不到只記 `note`，不影響產出。
+- **run_daily 接點（M2）**：只在 **ok 路徑**、`rebuild_products()` 之後呼叫 `run_sentiment()`；任何例外捕捉 →
+  印 `::warning::`、`status.json` 寫 `sentiment_error`（遮罩後、≤300 字；成功時移除此鍵；`write_status` 未傳此參數時
+  沿用舊值，故 verify_daily 只更新健檢時不會洗掉），**exit code 語意不變**。`no_data`／`waiting`／`missing`／`error`
+  路徑一行未動、不呼叫。`gather_sources()` 補 `sources.sentiment`＝有任一關鍵值的最新列日期（檔案未產生時不列）。
+  `daily.yml` 的 commit 步驟本來就是 `git add data/`，不需改。verify.yml 不重算情緒指標。
+- **token 遮罩（M3）**：`finmind.mask_secret()`（token 字面量替換＋`token=` 後綴遮罩兩道）已套在 `fm_get` 的所有
+  warning／error 與 `last_err`；`sentiment.py` 與 `run_sentiment()` 的例外訊息／log 也一律經它。
+  `tests/test_sentiment.py` 以假 token 斷言 log、例外、產物、status.json、stdout 皆不含它。
+- 測試：`tests/test_sentiment.py`（§0 的 2026-09-24 實測數字為 fixture：P/C 85.33／121.11 逐位、散戶淨 7,415、VIX 取最後一筆
+  23.12；小台全市場 OI 為**構造值**，因實數尚未取得）；`tests/conftest.py` 的 autouse fixture 讓 sentiment 預設抓取
+  （FinMind／期交所）立即失敗，所有測試離線。
+
+## 規格後的演進（規格書未涵蓋、已實作）
+
+- 新增「外資投信對作」tab（外資投信反向）；同步頁與對作頁加「強度=min(雙方金額)」並依此排序。
+- 三大法人卡資料源由 FinMind 改證交所/櫃買，並拆上市/上櫃/合計、顯示買/賣/淨。
+- 台指期卡比較基準可選、顯示比較日 OI。
+- ETF 頁預設市值排行、股票/債券型按鈕切換、債券判別改 B/D/T+名稱含債。
+- 模式新增 本週/上週/上月；issued_lots 改用 Shareholding 現值。
+
+## 檔案結構
+
+```
+src/   finmind.py(API client, token lazy) build_meta.py pipeline.py backfill.py
+       backfill_market.py futures.py totals.py budget.py sectors.py foreign_flows.py
+       healthcheck.py run_daily.py(每日) verify_daily.py(延後驗證) sentiment.py(市場情緒指標)
+tests/ parity.py(前後端口徑比對) extract_js.mjs(從 index.html 抽 JS 聚合函式) test_sentiment.py(市場情緒)
+data/  daily/YYYYMMDD.json(逐檔20欄) futures/ meta.json totals.json
+       latest.json latest_ranges.json sector_latest.json sector_ranges.json
+       industry_chain.json foreign_history.json status.json baseline_20260430.json
+       sentiment.json(市場情緒，postmkt 前端讀)
+index.html  taiwan-flows-spec_V1.md
+.github/workflows/  daily.yml(21:19 台北) verify.yml(23:40 台北) parity.yml(push 時)
+                    canon.yml(push 時，守 CLAUDE.md 頂端 CANON 區塊)
+```
+
+**改動 `budget.py`/`sectors.py`/`index.html` 的聚合邏輯時**：這是同一套口徑的兩份實作（單日/近N日走後端預算，自訂區間/本週/上週/上月走前端聚合），**改一邊就要改另一邊**，並跑 `python tests/parity.py --n 1 5 10 20 65` 確認零差異。四捨五入一律用 `budget.jround`（JS `Math.round` 語意），排序一律帶次鍵（`code`／類股用 `sector`），`chg_pct` 的寫法固定 `c/base*100-100`——這三點都是實際踩過的漂移。
+
+daily schema cols：`code,close,chg_pct,vol,amt,t_net,t_amt,f_net,f_amt,d_net,d_amt,t_inv,f_shares,f_pct,f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（張/千元/%）。
+（2026-07-26 更正：補上末尾 6 個 buy/sell 欄，以 `data/daily/20260724.json` 實際 cols 為準。）
+
+## 2026-06-14 大指令（5 部分）— 全部完成
+
+- **Part 1 ✓**：三大法人卡加「外資佔成交」＝(外資買+賣金額)/(2×市場成交金額)。`totals.json` 每個市場加 `turnover_k`（上市 FMTQIK、上櫃 tradingIndex 月查取當日，皆千元）；`totals.py --backfill-turnover` 回補、`update_total` 每日帶；前端 `computeTot` 加總 turnover、`renderTotCard` 外資列顯示佔比。（6/12 上市 35.3%）
+- **Part 2 ✓**：ETF 兩個排行都加 外資/投信/自營佔比＝(買張+賣張)/(2×成交張)；成交金額排行另加 外資買/賣、投信買/賣、自營買/賖（金額）。`budget.py aggregate` 加 f/t/d buy/sell（張）+ 買賣金額（Σ逐日張×當日close，千元）；`page_etf` 加 `share()` + buy/sell；前端 `aggregateRange`/`jPageEtf`/`renderEtf` 同步。
+- **Part 4 ✓**：Excel 工作表欄位——外資/投信進出 +持股張/持股市值；外資投信同步 −加總 +投信金額/張+外資金額/張；對作 `OPP_MINI=SYNC_MINI`；ETF市值 −漲跌 +佔比3；大盤三大法人 +外資佔比+買賣分欄；台指期 −金額 +未平倉部位市值。寬表改 A3 橫向、右表起始欄 `RS(cols)=cols.length+2` 動態避重疊。
+- **Part 5 ✓**：Excel「ETF市值」與「大盤資金」合併成單一工作表「ETF與大盤」。
+- 台指期「未平倉部位市值」＝**名目市值＝口數×加權指數×200**（使用者選定）。TAIEX 加權指數由 FMTQIK 一併存進 `totals.json` rows[d].taiex（`fetch_fmtqik_month`）；`mktval=lots*taiex*200/1e8`（億）。6/12：-65,039 口 → -5,745 億。
+
+### 後續微調（2026-06-14 第二批）
+1. 三大法人卡標籤「佔成交」→「外資佔比」。
+2. futbar 卡「金額淨額」→「未平倉市值」＝名目市值（lots×taiex×200/1e8）；前端與 Excel 一致。
+3. **⚠ 未做**：ETF市值排行加「自營持股市值」——**無自營庫存資料源**（baseline 只有 trust_inv；外資靠 Shareholding、投信靠 baseline 累計，自營兩者皆無）。需接自營庫存來源才能算絕對持股市值。
+4. 外資買賣超 tab 比照其他 tab 顯示 futbar（`render()` foreignflows 分支改呼叫 `updateFutbar()`）。
+5. 外資買賣超 tab/Excel 版面：近期區塊（上週/本週/近5日**每日5列**）置頂 → 年度累計（改名、新到舊、前端 `state.ffOpen` +/− 摺疊、Excel 月份預設展開）。
+6. Excel 全部工作表改 **A4 直向**、`fitToWidth=1`、窄邊界；原並排買賣表改**直向堆疊**（最寬 ≤11 欄，避免橫向溢出/過度縮放）。
+7. ETF與大盤工作表 A4 直向、表格改直向堆疊（ETF股票/債券/三大法人/台指期 依序）。
+
+### 第三批 Excel 微調
+- 外資買賣超：本週列在上週之前；單位說明併入標題（移除獨立說明行）。
+- ETF與大盤「三大法人」期間欄寬 18→26（避免日期被截）。
+- 外資/投信進出、同步、對作四張：改回**左右並排（左5右5）**、`xlSheet(...,true)` fitToHeight=1 擠進一張直式 A4、`xlTable(...,fz=8)` 壓字、`xlApplyWidth(ws,W,0.72)` 壓欄。
+- **字型慣例**：`xlTable` 有數字格式（c.fmt）的儲存格用 **Arial**（FZN），其餘文字/表頭/標題用 **微軟正黑體**（FZH）；head/sub 也是微軟正黑體。
+
+### 版面精簡微調
+- 更新時間併入資料日列：boot 存 `state.updatedTs`、隱藏 `#updated`，`updateDateLabel` 輸出「資料日/區間｜本站更新 ts｜狀態：<狀態詞>｜資料源徽章」同一行（後兩段 `.dmeta` 小灰；2026-09-06 補「本站更新」與「狀態」段）。
+- 收合卡字體縮小（`.csum/.csum .v` 11px、collapsed `.ttl` 12px、padding 3px、line-height 1.2）→ 收合高度 ~23px。
+- ETF 概況（整體/股票/債券三卡）可收合：`state.etfStatsOpen`（存 tf_cards.etf），`renderEtf` 加 `#etfStatTgl`，bindSegs 綁定；收合後表格 scrollbox 自動長高。
+- 右上狀態詞與頂列「狀態：」共用 `siteStatus()`（grep `function siteStatus`，2026-09-06 統一語意，取代原「資料已更新 <date>」／「更新 ts」）：
+  `status.json` 讀不到→「查詢失敗（未知）」(灰，不代表資料異常)、`missing`→「資料缺漏」(紅)、`waiting`→「等待資料發布」(黃)、
+  `no_data` 或台北週六／日**或行事曆休市日**→「休市定格」(灰)、`ok` 且 `latest.date` ≥ 最近應有資料的交易日→「正常」(綠)、
+  `ok` 但落後→「等待資料發布」(黃)、其他（`error`）→「資料異常」(紅)。「最近應有資料的交易日」（`lastDueTradingDay`）＝台北
+  交易日 20:00（後端 `PUBLISH_DEADLINE_HOUR`）後為今日、否則往前最近交易日（跳過週末與休市日）。
+  **前端國定假日（2026-09-29 家族批次二，規格正本 `taiwan-flow-live-v2/docs/holiday-calendar.md` §5b）**：`boot()` 開頭
+  `holLoad()` 以同源相對路徑 `../taiwan-flow-live-v2/data/twse_holidays.json` **非阻塞**讀取（不進首屏 `Promise.all`；CSP
+  `connect-src 'self'` 已涵蓋、未改），載入成功才重繪右上 pill（`renderStatusPill`）與頂列（`updateDateLabel`）一次。
+  **休市日比照週末**：顯示「休市定格」而非「等待資料發布」。`status.json` 的 `missing`／`waiting` 仍優先於行事曆
+  （後端判的就照顯示，前端不蓋掉）。**fail-open**：讀不到／非 2xx／壞檔／`schema` 不是整數 1（`true` 不收）／`years`
+  無合法年度 → `HOL=null`＝只排週末＝改動前行為（假日晚間短暫「等待資料發布」）；某年不在 `years`＝該年未知。
+  Playwright 以行事曆 404 對跑 origin/main，8 tab 頂列＋pill＋`#main` 逐字相同。颱風臨時停市仍會誤報。
+  刻意不改：本週／上週／上月的週一推算（`getDay()` 用於日曆週分桶，實際交易日由 `meta.calendar` 過濾）。
+  同規則在 postmkt／taiwan-backtest 前端與 Worker `parseHolidayCal` 各一份。測試 `tests/test_holidays_frontend.mjs`
+  （pytest 由 `tests/test_holidays_frontend.py` 代跑；fixture `tests/fixtures/twse_holidays_2026.json` 為 2026-09-29 快照）。
+  反映**最近一次 pipeline 執行結果**，非即時盤態；日期欄語意見 `postmkt/docs/date-semantics.md`。
+
+### ETF 佔比語意（市值排行 vs 成交金額排行）
+- **市值排行**的佔比＝**持股市值/總市值**。**外資**＝官方持股比（準）；**投信、自營對 ETF 無可靠絕對來源**（投信 t_inv 缺 ETF baseline 種子而失真、自營無來源）→ `mktcap_row` 的 `t_hold_value_k/t_share/d_share` 一律 None（顯「—」），其他＝市值−外資持股市值。
+- **成交金額排行**的佔比＝**成交量參與率**＝(買張+賣張)/(2×成交張)（`turnover_row` 用 `shares()`，三法人皆有值）。兩表語意不同、勿混用。
+
+### 表格響應式高度
+- `.scrollbox` 高度改由 `fitScrollbox()` 動態設定＝`視窗高 − 表格top − 14`（下限 160px），依裝置/視窗高決定顯示筆數、超出可下拉。
+- 觸發點：render 結尾、renderTotCard/updateFutbar 結尾（卡片開合→表格上移→自動多顯示幾筆）、window resize（120ms debounce）。
+- 6 個 tab 都套用（外資買賣超表改 `tablewrap scrollbox`，移除原 max-height:none）。
+- 範例（812px 視窗）：兩卡展開 ~7 筆、兩卡收合 ~12 筆。
+
+### 卡片可開合（省空間給 tab）
+- 三大法人卡、台指期卡 標題加 ▾/▸ 開合鈕（`state.totOpen/futOpen`，存 `localStorage('tf_cards')`，`loadCardState/saveCardState`）。
+- 收合時只剩一行摘要（三大法人：外資淨+佔比；台指期：口數+市值），高度 130→35 / 54→29px，共省 ~120px。
+- renderTotCard / updateFutbar 各有收合分支（收合時 updateFutbar 略過比較日 fetch）。
+
+### 各源資料日期徽章（偵測不同步）
+- 因各資料源更新時間不一，每卡/tab 顯示自己的「資料源 · MM-DD」徽章；落後於最新源者轉琥珀色標「(落後)」、tooltip 寫來源名。
+- 後端：`run_daily.py` 的 `gather_sources()` 把五源最新日寫進 `status.json.sources`：`daily`(meta.calendar 末日)、`totals`(totals.json 末日)、`futures`(futures 最新檔)、`foreign`(foreign_history.latest_date)、`sentiment`(sentiment.json 有任一關鍵值的最新列日期；檔案未產生時不列，2026-09-29 新增，見「市場情緒指標」節)。
+- 前端：`srcDate/newestSrc/srcBadge`（讀 `state.status.sources`，缺時後備用已載入 JSON 的日期）。掛在 三大法人卡(totals)、台指期卡(futures)、daterow(daily，foreignflows 不掛)、外資買賣超 tab 說明列(foreign)。
+
+### Excel 可選基準日 + 各源日期標示
+- 模式列加 `#xlsxDate`（type=date，預設 `state.latest.date`、min/max=calendar 範圍）；`xlsxAnchor()` 取值並吸附到 ≤ 該日的最近交易日，`buildExcel` 的 `d2` 改用它（檔名、各表期間都跟著）。
+- 各工作表標題改「基準日 d2」，標題下加「資料源：<來源> · <日期>」說明列；`srcAsOf(key,d2)`：daily=d2、totals/futures 取 ≤d2 最近、foreign=歷史最新。ETF與大盤列出三源各自日期。
+- 限制：「外資買賣超」工作表是完整歷史（近期段相對最新日），不隨選定的過去 d2 改變。
+
+### 網頁手動更新鍵
+- 模式列「🔄 更新資料」鈕：`triggerUpdate()` 直接 POST GitHub Actions `workflows/daily.yml/dispatches`（ref=main）觸發 `daily-flows`。**2026-10-01 起 Token 改存瀏覽器密碼管理器**（取代瀏覽器的 prompt 對話框——它不會觸發密碼管理器）：未載入時點鈕開頁內面板 `#credOverlay`，`<form data-cred="tfgh">` 的 username 固定 `github-pat-flows-dispatch`（readonly）＋`current-password` 密碼欄；按「載入」先唯讀打 `GET api.github.com/repos/shihpc/taiwan-flows`（token 放 header）驗證（本 repo 是 public，回 200 只證明 PAT 有效、**不證明有 Actions 寫入權限**，權限不足要到觸發時才看到 403），通過才收進記憶體 `CRED.tfgh`、關面板並立即觸發；勾「只在本分頁記住」才寫 sessionStorage `cred_tab_tfgh`。**不再寫 localStorage**；舊 `tf_gh_token`（連同 `anthropic_key`／`gh_token`／`fm_token`）不讀作金鑰，載入頁面即無條件刪除；頁頂搬移提示卡與「刪除本機舊副本」已於 2026-10-18 移除（四站同一套，正本見 `postmkt/CLAUDE.md` 約定 6）。Shift+點＝清除本分頁 token 後重開面板；401/403 自動清除記憶體 token。**注意**：204 只代表 dispatch 已受理，workflow 實際成敗仍要看 Actions 頁（缺 FINMIND_TOKEN secret／太早觸發法人未齊／runner 限流都會讓 run 失敗）。
+
+### 第四批 Excel 微調
+- 漲跌幅欄位（mP）改一位小數 `0.0"%"`。
+- 四張並排表：**不再用欄寬 ×0.72 壓縮**（會把金額欄壓到比數字窄而出現 #####）；改為數字欄保持足寬（mA/mAm w13、mL w11、外資買賣超 local A w13），只把**間隔欄壓到 1.5** 省空間；整張仍靠 fitToWidth/Height=1 擠進一張 A4。
+
+## 待辦 / 已知限制
+
+- **未做（2026-07-25 評估時明確排除）**：三個 repo（taiwan-flows / taiwan-flow-live-v2 / taiwan-stock-news）各有一份 FinMind client，token 載入、重試、節流各寫一次、行為不一致（例如非交易日 400 只有 taiwan-flows 會炸紅）。要共用需先有套件/vendoring 機制，跨 repo 改動風險高於收益，暫不動。
+- **觀察名單**：每次 data commit 約 4.02MB 重算產物（sector_ranges 2.6MB + sector_latest 575KB + latest_ranges 449KB + latest 110KB），而**每交易日實際 commit 3 次**（哨兵 17:01 首觸發＋後續哨兵／備援 cron 冪等重跑）≈ 12.5MB/交易日。2026-09-06 實測：`sector_ranges.json` 35 個版本佔 pack 44.5%、每版本 delta 後仍約 364KB；近 12 個交易日中 7 次是**只動 `generated_at` 的 no-op commit**（內容無變、純時戳）。**2026-09-07 批次三 #17 已做前半**：後端改產 full＋lite 雙格式、前端 `SECTOR_SOURCE="lite"` 只讀 lite，drill-down 改前端即時聚合（見「類股資金流」節）。
+  **效益的誠實範圍**：這一步省的是**前端傳輸**（單日 579KB→36KB、r20 2.57MB→146KB，實測），**git 還沒省到**——full 仍照產照 commit，每版本 delta 364KB 照舊。真正的 git 增量效益要等 full 不落 git（`.gitignore` 掉 `sector_latest.json`／`sector_ranges.json`）：那之後每版本 364KB→約 0（lite 143KB 全檔重寫、delta 後遠小於此），但**既有 pack 不會縮**（歷史 blob 還在，除非改寫歷史，不做）。未做的原因：full 是目前唯一的回退路徑，先讓 lite 在線上跑一段時間再拆。
+- 約 591 檔（多為無外資持股申報的債券 ETF + 冷門股）issued_lots=None → 市值缺；要補需接證交所/櫃買 ETF 規模或更完整發行股數來源。
+- ~~逐檔表只有買賣超「淨額」，無買/賣分項；要的話需加欄位 + 重跑回補。~~ **此項已完成**：daily schema 末尾已有 `f_buy,f_sell,t_buy,t_sell,d_buy,d_sell`（2026-07-26 核對 `data/daily/20260724.json` 實際 cols 確認，非待辦）。
+- GitHub Actions 在美國 runner 抓 TWSE/TPEx 偶爾節流；totals.py 已內建重試，若某天漏抓重跑 `backfill_market.py`。
