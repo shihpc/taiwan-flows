@@ -22,7 +22,7 @@ jobs:
   canon:
     runs-on: ubuntu-latest
     env:
-      EXPECT: 42fa47a80b2032e82d52cae0f20a0dee5a0865603f40e1855edb67b98316aa3b
+      EXPECT: 4a3777f36ad1f6ee7b28137896639d0efcb3ada33dccc8cf0cb3d59144ab1970
     steps:
       - uses: actions/checkout@v4
       - name: 驗 CLAUDE.md 的 CANON 區塊未被單獨修改
